@@ -522,7 +522,7 @@
         <label class="settings-row" for="compactModeSetting">
           <span class="settings-label">
             <strong>精简模式</strong>
-            <span>隐藏 log 和 rn-stdout，使用高密度分割线列表</span>
+            <span>隐藏级别和 rn-stdout，使用高密度分割线列表</span>
           </span>
           <input id="compactModeSetting" class="settings-checkbox" type="checkbox" checked />
         </label>
@@ -551,6 +551,8 @@
         virtualHeights: new Map(),
         virtualTotalHeight: 0,
         virtualRenderScheduled: false,
+        deferredEntryIds: new Set(),
+        renderScrollToBottom: undefined,
       }
 
       const $ = selector => document.querySelector(selector)
@@ -559,6 +561,10 @@
       const searchNode = $('#search')
       const levelFilters = [...document.querySelectorAll('[data-level-filter]')]
       const logList = entryList.parentElement
+
+      function isLogAtBottom() {
+        return logList.scrollHeight - logList.scrollTop - logList.clientHeight <= 8
+      }
 
       function formatTime(value) {
         return new Date(value).toLocaleTimeString()
@@ -809,6 +815,12 @@
         })
       }
 
+      function getRenderableEntries() {
+        const visible = getVisibleEntries()
+        if (!state.deferredEntryIds.size) return visible
+        return visible.filter(entry => !state.deferredEntryIds.has(entry.id))
+      }
+
       function createLogEntry(entry) {
         const article = document.createElement('article')
         article.className = `entry ${entry.level}${state.compactMode ? ' compact-entry' : ''}`
@@ -819,7 +831,7 @@
         const level = document.createElement('span')
         level.className = `entry-level ${entry.level}`
         level.textContent = entry.level
-        level.hidden = state.compactMode && entry.level === 'log'
+        level.hidden = state.compactMode
         const source = document.createElement('span')
         source.className = 'entry-source'
         source.hidden = state.compactMode && entry.source === 'rn-stdout'
@@ -851,7 +863,8 @@
       function estimateEntryHeight(entry) {
         const preview = truncateAnsiText(entry.message, 250)
         const lineCount = Math.max(1, Math.ceil(stripAnsi(preview).length / 120))
-        return 38 + lineCount * 18 + 7
+        const gap = state.compactMode ? 1 : 7
+        return 38 + lineCount * 18 + gap
       }
 
       function getVirtualHeight(entry) {
@@ -908,7 +921,10 @@
         const metrics = getVirtualMetrics(items)
         const viewportHeight = logList.clientHeight || 600
         const scrollTop = logList.scrollTop
-        const overscan = 600
+        const wasAtBottom = isLogAtBottom()
+        const anchorIndex = findVirtualIndex(metrics.offsets, scrollTop)
+        const anchorOffset = scrollTop - metrics.offsets[anchorIndex]
+        const overscan = 1800
         const start = Math.max(
           0,
           findVirtualIndex(metrics.offsets, Math.max(0, scrollTop - overscan)) - 1
@@ -939,13 +955,36 @@
           const index = Number(node.dataset.virtualIndex)
           const entry = items[index]
           const key = getVirtualKey(entry)
-          const height = node.getBoundingClientRect().height + 7
+          const gap = state.compactMode ? 1 : 7
+          const height = node.getBoundingClientRect().height + gap
           if (Math.abs((state.virtualHeights.get(key) || 0) - height) > 1) {
             state.virtualHeights.set(key, height)
             heightChanged = true
           }
         })
-        if (heightChanged) scheduleVirtualRender()
+        if (heightChanged) {
+          const nextMetrics = getVirtualMetrics(items)
+          topSpacer.style.height = `${nextMetrics.offsets[start]}px`
+          bottomSpacer.style.height = `${Math.max(
+            0,
+            nextMetrics.total - nextMetrics.offsets[end]
+          )}px`
+          if (wasAtBottom) {
+            logList.scrollTop = Math.max(
+              0,
+              nextMetrics.total - logList.clientHeight
+            )
+          } else {
+            logList.scrollTop = Math.max(
+              0,
+              nextMetrics.offsets[anchorIndex] + anchorOffset
+            )
+          }
+          state.virtualTotalHeight = nextMetrics.total
+          scheduleVirtualRender()
+        } else if (!wasAtBottom) {
+          logList.scrollTop = scrollTop
+        }
       }
 
       function updateFilterControls() {
@@ -962,9 +1001,9 @@
         }
       }
 
-      function renderLog() {
+      function renderLog(scrollToBottom) {
         updateFilterControls()
-        const visible = getVisibleEntries()
+        const visible = getRenderableEntries()
         state.virtualEntries = visible
         renderVirtualWindow()
         emptyNode.hidden = visible.length > 0
@@ -973,12 +1012,16 @@
           : '没有符合当前 filter 的内容'
         $('#clear').disabled = state.entries.length === 0
         $('#export').disabled = visible.length === 0
-        if (state.autoScroll && state.activeView === 'log') {
+        const shouldScroll = scrollToBottom === undefined
+          ? state.autoScroll && state.activeView === 'log'
+          : scrollToBottom
+        if (shouldScroll) {
           logList.scrollTop = logList.scrollHeight
         }
       }
 
       function addEntry(entry) {
+        const deferEntry = state.activeView === 'log' && !isLogAtBottom()
         const signature = [entry.source, entry.level, entry.message].join('\u0000')
         if (
           (entry.id && state.entryIds.has(entry.id)) ||
@@ -987,6 +1030,8 @@
         if (entry.id) state.entryIds.add(entry.id)
         state.entrySignatures.add(signature)
         state.entries.push(entry)
+        if (deferEntry) state.deferredEntryIds.add(entry.id)
+        else state.deferredEntryIds.clear()
         if (state.entries.length > 2000) {
           const removed = state.entries.shift()
           if (removed.id) state.entryIds.delete(removed.id)
@@ -1015,13 +1060,28 @@
       }
 
       function scheduleRender() {
+        if (state.renderScrollToBottom === undefined) {
+          state.renderScrollToBottom = state.autoScroll &&
+            state.activeView === 'log' && isLogAtBottom()
+        }
         if (state.renderScheduled) return
         state.renderScheduled = true
         requestAnimationFrame(() => {
           state.renderScheduled = false
-          renderLog()
+          const scrollToBottom = state.renderScrollToBottom
+          state.renderScrollToBottom = undefined
+          renderLog(scrollToBottom)
           renderDashboard()
         })
+      }
+
+      function releaseDeferredEntries() {
+        if (!state.deferredEntryIds.size || !isLogAtBottom()) return
+        state.deferredEntryIds.clear()
+        state.virtualHeights.clear()
+        renderLog(false)
+        logList.scrollTop = logList.scrollHeight
+        scheduleVirtualRender()
       }
 
       function updateReplayProgress(current, total) {
@@ -1322,8 +1382,8 @@
           else state.selectedLevels.add(level)
           state.virtualHeights.clear()
           setActiveView('log')
-          const logList = entryList.parentElement
           logList.scrollTop = logList.scrollHeight
+          releaseDeferredEntries()
         })
       })
       $('#pause').addEventListener('click', event => {
@@ -1337,6 +1397,7 @@
         state.entrySignatures.clear()
         state.virtualEntries = []
         state.virtualHeights.clear()
+        state.deferredEntryIds.clear()
         renderLog()
         renderDashboard()
       })
@@ -1358,7 +1419,10 @@
         closeDrawer()
         closeSettings()
       })
-      logList.addEventListener('scroll', scheduleVirtualRender, { passive: true })
+      logList.addEventListener('scroll', () => {
+        scheduleVirtualRender()
+        releaseDeferredEntries()
+      }, { passive: true })
       window.addEventListener('resize', () => {
         state.virtualHeights.clear()
         scheduleVirtualRender()
