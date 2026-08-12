@@ -1,0 +1,1151 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RN Log Viewer</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0f14;
+        --panel: #131a23;
+        --panel-strong: #18222e;
+        --line: #273342;
+        --text: #e7edf5;
+        --muted: #8694a6;
+        --blue: #62a8ff;
+        --green: #46d483;
+        --yellow: #e7b44d;
+        --red: #ff6b69;
+        --shadow: 0 16px 42px rgba(0, 0, 0, .22);
+      }
+
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--text);
+        font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      button, input, select { font: inherit; }
+      button, select, input {
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--panel);
+        color: var(--text);
+      }
+      button { cursor: pointer; }
+      button:hover:not(:disabled), button.active {
+        border-color: var(--blue);
+        color: var(--blue);
+      }
+      button:disabled {
+        cursor: not-allowed;
+        opacity: .35;
+      }
+      input, select { outline: none; }
+      input:focus, select:focus { border-color: var(--blue); }
+
+      .app-shell { display: flex; height: 100%; }
+      .sidebar {
+        display: flex;
+        flex: 0 0 220px;
+        flex-direction: column;
+        border-right: 1px solid var(--line);
+        background: #0e141c;
+        transition: flex-basis .2s ease;
+      }
+      .sidebar.collapsed { flex-basis: 66px; }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        height: 62px;
+        padding: 0 17px;
+        border-bottom: 1px solid var(--line);
+        font-weight: 700;
+        white-space: nowrap;
+      }
+      .brand-mark {
+        display: grid;
+        width: 30px;
+        height: 30px;
+        flex: 0 0 30px;
+        place-items: center;
+        border-radius: 9px;
+        background: var(--blue);
+        color: #08111d;
+        font-weight: 800;
+      }
+      .sidebar.collapsed .brand { justify-content: center; gap: 0; padding: 0; }
+      .sidebar.collapsed .brand-mark { display: none; }
+      .sidebar.collapsed .brand-text,
+      .sidebar.collapsed .nav-label { display: none; }
+      .sidebar-toggle {
+        display: grid;
+        width: 30px;
+        height: 30px;
+        flex: 0 0 30px;
+        place-items: center;
+        border: 1px solid var(--line);
+        color: var(--muted);
+      }
+      .nav { display: grid; gap: 5px; padding: 8px; }
+      .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-height: 42px;
+        padding: 0 12px;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--muted);
+        text-align: left;
+      }
+      .nav-item.active {
+        border-color: rgba(98, 168, 255, .25);
+        background: rgba(98, 168, 255, .12);
+        color: var(--blue);
+      }
+      .nav-icon { width: 18px; flex: 0 0 18px; text-align: center; }
+      .sidebar.collapsed .nav-item { justify-content: center; padding: 0; }
+      .sidebar-footer {
+        margin-top: auto;
+        padding: 14px 16px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .sidebar.collapsed .sidebar-footer { display: none; }
+
+      .workspace { min-width: 0; flex: 1; }
+      .view { display: none; height: 100%; min-width: 0; }
+      .view.active { display: flex; flex-direction: column; }
+      .view-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 62px;
+        padding: 0 22px;
+        border-bottom: 1px solid var(--line);
+      }
+      h1, h2, h3, p { margin: 0; }
+      h1 { font-size: 18px; }
+      h2 { font-size: 14px; }
+      .muted { color: var(--muted); }
+      .connection {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .connection::before {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--yellow);
+        content: "";
+      }
+      .connection.online::before { background: var(--green); }
+      .connection-progress {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        min-width: 150px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .connection-progress[hidden] { display: none; }
+      .progress-track {
+        width: 84px;
+        height: 5px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: var(--line);
+      }
+      .progress-bar {
+        width: 0;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--blue);
+        transition: width .12s ease;
+      }
+
+      .dashboard-grid {
+        display: grid;
+        min-height: 0;
+        flex: 1;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-rows: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        padding: 12px;
+      }
+      .card {
+        display: flex;
+        min-width: 0;
+        min-height: 0;
+        flex-direction: column;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+      }
+      .card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 45px;
+        padding: 0 14px;
+        border-bottom: 1px solid var(--line);
+      }
+      .card-body { min-height: 0; flex: 1; padding: 12px; }
+      .console-output {
+        height: 100%;
+        overflow: auto;
+        overflow-x: hidden;
+        min-width: 0;
+        color: #c8d3df;
+        font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      .console-line {
+        display: flex;
+        gap: 8px;
+        min-width: 0;
+        max-width: 100%;
+        padding: 3px 0;
+        border-bottom: 1px solid rgba(39, 51, 66, .45);
+      }
+      .console-time { flex: 0 0 66px; color: var(--muted); }
+      .console-level { flex: 0 0 42px; font-weight: 700; }
+      .console-level.warn { color: var(--yellow); }
+      .console-level.error { color: var(--red); }
+      .console-level.log { color: var(--green); }
+      .console-source { flex: 0 0 72px; color: var(--blue); }
+      .console-message {
+        min-width: 0;
+        max-width: 100%;
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .table-toolbar { display: flex; gap: 8px; align-items: center; }
+      select { padding: 6px 8px; }
+      .table-wrap { height: 100%; overflow: auto; }
+      table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      th, td {
+        max-width: 260px;
+        padding: 7px 8px;
+        border-bottom: 1px solid rgba(39, 51, 66, .7);
+        text-align: left;
+        vertical-align: top;
+      }
+      th { position: sticky; top: 0; background: var(--panel-strong); color: var(--muted); font-weight: 600; }
+      td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .control-body { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 9px; }
+      .control-button { padding: 9px 13px; }
+      .control-button.start { border-color: rgba(70, 212, 131, .45); color: var(--green); }
+      .control-button.stop { border-color: rgba(255, 107, 105, .45); color: var(--red); }
+      .control-button.restart { border-color: rgba(231, 180, 77, .45); color: var(--yellow); }
+      .control-hint { width: 100%; color: var(--muted); font-size: 12px; }
+      .status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      .status-item { padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-strong); }
+      .status-label { color: var(--muted); font-size: 11px; }
+      .status-value { margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .status-value.running { color: var(--green); }
+      .status-value.stopped { color: var(--yellow); }
+
+      .log-view { min-height: 0; }
+      .log-list { min-height: 0; flex: 1; overflow: auto; overflow-x: hidden; padding: 12px; }
+      .entry-list { display: grid; gap: 7px; }
+      .entry {
+        min-width: 0;
+        max-width: 100%;
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--green);
+        border-radius: 7px;
+        background: var(--panel);
+        cursor: pointer;
+        transition: border-color .15s ease, background .15s ease;
+      }
+      .entry:hover { border-color: var(--blue); background: var(--panel-strong); }
+      .entry.warn { border-left-color: var(--yellow); }
+      .entry.error { border-left-color: var(--red); }
+      .entry-head { display: flex; align-items: center; gap: 9px; padding: 7px 9px 2px; color: var(--muted); font-size: 11px; }
+      .entry-level { min-width: 39px; font-weight: 700; text-transform: uppercase; }
+      .entry-level.log { color: var(--green); }
+      .entry-level.warn { color: var(--yellow); }
+      .entry-level.error { color: var(--red); }
+      .entry-source { color: var(--blue); }
+      .entry-time { margin-left: auto; }
+      .entry-message {
+        display: block;
+        margin: 0;
+        padding: 2px 9px 9px;
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      mark { padding: 0 2px; border-radius: 2px; background: rgba(231, 180, 77, .38); color: #fff4cc; }
+      .empty { padding: 70px 20px; color: var(--muted); text-align: center; }
+      .log-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 7px;
+        padding: 9px 12px;
+        border-top: 1px solid var(--line);
+        background: #0f151d;
+      }
+      .log-search { min-width: 180px; flex: 1; padding: 7px 9px; }
+      .filter-button, .toolbar-button { padding: 6px 9px; font-size: 12px; }
+      .filter-button.active { border-color: var(--blue); background: rgba(98, 168, 255, .12); color: var(--blue); }
+      .toolbar-spacer { flex: 1; }
+
+      .drawer-backdrop[hidden], .drawer[hidden] { display: none; }
+      .drawer-backdrop { position: fixed; inset: 0; z-index: 5; background: rgba(0, 0, 0, .45); }
+      .drawer {
+        position: fixed;
+        top: 0;
+        right: 0;
+        z-index: 6;
+        display: flex;
+        width: 85vw;
+        height: 100%;
+        flex-direction: column;
+        border-left: 1px solid var(--line);
+        background: var(--panel);
+        box-shadow: -18px 0 48px rgba(0, 0, 0, .35);
+      }
+      .drawer-header { display: flex; align-items: center; gap: 14px; min-width: 0; padding: 15px 17px; border-bottom: 1px solid var(--line); }
+      .drawer-heading { display: flex; align-items: center; gap: 14px; min-width: 0; flex: 1; }
+      .drawer-heading h2 { flex: 0 0 auto; }
+      .drawer-summary { display: flex; min-width: 0; flex: 1; gap: 12px; overflow: hidden; color: var(--muted); font-size: 12px; }
+      .drawer-summary-item { display: flex; min-width: 0; gap: 4px; white-space: nowrap; }
+      .drawer-summary-label { flex: 0 0 auto; color: var(--muted); }
+      .drawer-summary-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .drawer-actions { display: flex; align-items: center; gap: 8px; }
+      .format-button { padding: 6px 10px; color: var(--yellow); }
+      .copy-button { padding: 6px 10px; color: var(--blue); }
+      .log-link { color: var(--blue); text-decoration: underline; text-underline-offset: 2px; }
+      .drawer-close { width: 30px; height: 30px; color: var(--muted); }
+      .drawer-content { min-height: 0; flex: 1; overflow: auto; padding: 17px; }
+      .drawer-content pre { max-width: 100%; margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; word-break: break-word; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+      @media (max-width: 820px) {
+        .sidebar { flex-basis: 66px; }
+        .sidebar .brand { padding: 0 18px; }
+        .brand-text, .nav-label, .sidebar-footer { display: none; }
+        .nav-item { justify-content: center; padding: 0; }
+        .dashboard-grid { grid-template-rows: repeat(4, minmax(170px, 1fr)); }
+        .dashboard-grid .card { grid-column: 1 / -1; }
+        .dashboard-grid { overflow: auto; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside id="sidebar" class="sidebar">
+        <div class="brand">
+          <button id="sidebarToggle" class="sidebar-toggle" type="button" title="展开/折叠侧边栏">☰</button>
+          <span class="brand-mark">RN</span>
+          <span class="brand-text">Log Viewer</span>
+        </div>
+        <nav class="nav" aria-label="主导航">
+          <button class="nav-item active" type="button" data-view="dashboard">
+            <span class="nav-icon">▦</span>
+            <span class="nav-label">Dashboard</span>
+          </button>
+          <button class="nav-item" type="button" data-view="log">
+            <span class="nav-icon">≡</span>
+            <span class="nav-label">Log</span>
+          </button>
+        </nav>
+        <div class="sidebar-footer">只在本机收集，不上传日志</div>
+      </aside>
+
+      <main class="workspace">
+        <section id="dashboardView" class="view active">
+          <header class="view-header">
+            <div>
+              <h1>Dashboard</h1>
+              <span class="muted">RN 开发运行面板</span>
+            </div>
+            <div>
+              <span id="connection" class="connection">连接中</span>
+              <span id="connectionProgress" class="connection-progress" hidden>
+                <span class="progress-track"><span id="progressBar" class="progress-bar"></span></span>
+                <span id="progressText">0/0</span>
+              </span>
+            </div>
+          </header>
+          <div class="dashboard-grid">
+            <article class="card">
+              <div class="card-header"><h2>实时控制台</h2><span id="consoleCount" class="muted">0 条</span></div>
+              <div class="card-body"><div id="consoleOutput" class="console-output"></div></div>
+            </article>
+            <article class="card">
+              <div class="card-header">
+                <h2>数据表格</h2>
+                <select id="tableMode" aria-label="选择数据表格">
+                  <option value="recent">最新日志</option>
+                  <option value="levels">级别统计</option>
+                  <option value="sources">来源统计</option>
+                </select>
+              </div>
+              <div class="card-body table-wrap"><table><thead id="tableHead"></thead><tbody id="tableBody"></tbody></table></div>
+            </article>
+            <article class="card">
+              <div class="card-header"><h2>RN 控制</h2><span id="controlState" class="muted">未运行</span></div>
+              <div class="card-body control-body">
+                <button id="startRn" class="control-button start" type="button">启动 RN</button>
+                <button id="stopRn" class="control-button stop" type="button">停止 RN</button>
+                <button id="restartRn" class="control-button restart" type="button">重启 RN</button>
+                <p class="control-hint">工作目录：<span id="devCwd">读取中……</span></p>
+              </div>
+            </article>
+            <article class="card">
+              <div class="card-header"><h2>运行状态</h2><span class="muted">本地服务</span></div>
+              <div class="card-body status-grid">
+                <div class="status-item"><div class="status-label">RN</div><div id="statusRn" class="status-value stopped">未运行</div></div>
+                <div class="status-item"><div class="status-label">已收集日志</div><div id="statusEntries" class="status-value">0</div></div>
+                <div class="status-item"><div class="status-label">网页连接</div><div id="statusClients" class="status-value">0</div></div>
+                <div class="status-item"><div class="status-label">页面热更新</div><div class="status-value running">已开启</div></div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section id="logView" class="view log-view">
+          <div class="log-list">
+            <div id="entryList" class="entry-list"></div>
+            <div id="empty" class="empty">等待 RN 日志……</div>
+          </div>
+          <div class="log-toolbar">
+            <input id="search" class="log-search" type="search" placeholder="搜索并高亮日志内容……" />
+            <button class="filter-button active" type="button" data-level-filter="all">全部 <span>0</span></button>
+            <button class="filter-button" type="button" data-level-filter="log">Log <span>0</span></button>
+            <button class="filter-button" type="button" data-level-filter="warn">Warn <span>0</span></button>
+            <button class="filter-button" type="button" data-level-filter="error">Error <span>0</span></button>
+            <span class="toolbar-spacer"></span>
+            <button id="pause" class="toolbar-button" type="button">暂停滚动</button>
+            <button id="clear" class="toolbar-button" type="button">清空</button>
+            <button id="export" class="toolbar-button" type="button">导出 JSON</button>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="drawerBackdrop" class="drawer-backdrop" hidden></div>
+    <aside id="drawer" class="drawer" hidden aria-label="日志详情">
+      <div class="drawer-header">
+        <div class="drawer-heading">
+          <h2>日志详情</h2>
+          <div class="drawer-summary">
+            <span class="drawer-summary-item"><span class="drawer-summary-label">级别</span><strong id="drawerLevel" class="drawer-summary-value"></strong></span>
+            <span class="drawer-summary-item"><span class="drawer-summary-label">来源</span><span id="drawerSource" class="drawer-summary-value"></span></span>
+            <span class="drawer-summary-item"><span class="drawer-summary-label">时间</span><span id="drawerTime" class="drawer-summary-value"></span></span>
+            <span class="drawer-summary-item"><span class="drawer-summary-label">ID</span><span id="drawerId" class="drawer-summary-value"></span></span>
+          </div>
+        </div>
+        <div class="drawer-actions">
+          <button id="formatLog" class="format-button" type="button">格式化</button>
+          <button id="copyLog" class="copy-button" type="button">复制日志</button>
+          <button id="drawerClose" class="drawer-close" type="button">×</button>
+        </div>
+      </div>
+      <div class="drawer-content"><pre id="drawerMessage"></pre></div>
+    </aside>
+
+    <script>
+      const state = {
+        entries: [],
+        entryIds: new Set(),
+        entrySignatures: new Set(),
+        selectedLevels: new Set(),
+        tableMode: 'recent',
+        autoScroll: true,
+        activeView: 'dashboard',
+        devRunning: false,
+        controlBusy: false,
+        drawerEntry: null,
+        drawerFormatted: false,
+        replaying: false,
+        replayTotal: 0,
+        replayCurrent: 0,
+        renderScheduled: false,
+      }
+
+      const $ = selector => document.querySelector(selector)
+      const entryList = $('#entryList')
+      const emptyNode = $('#empty')
+      const searchNode = $('#search')
+      const levelFilters = [...document.querySelectorAll('[data-level-filter]')]
+
+      function formatTime(value) {
+        return new Date(value).toLocaleTimeString()
+      }
+
+      function formatDate(value) {
+        return new Date(value).toLocaleString()
+      }
+
+      function escapeRegExp(value) {
+        return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      }
+
+      function normalizeAnsi(value) {
+        return value.replace(/\\u001b|\\x1b/g, '\u001b')
+      }
+
+      const ansiColors = {
+        30: '#1f2328', 31: '#ff6b69', 32: '#46d483', 33: '#e7b44d',
+        34: '#62a8ff', 35: '#d58cff', 36: '#5dd9d1', 37: '#e7edf5',
+        90: '#7d8590', 91: '#ff8b87', 92: '#6ee7a1', 93: '#f4d06f',
+        94: '#8bc3ff', 95: '#e5b3ff', 96: '#94ebe4', 97: '#ffffff',
+      }
+
+      function ansi256Color(value) {
+        if (value < 16) return ansiColors[value < 8 ? value + 30 : value + 82]
+        if (value >= 232) {
+          const shade = 8 + (value - 232) * 10
+          return `rgb(${shade}, ${shade}, ${shade})`
+        }
+        const index = value - 16
+        const red = Math.floor(index / 36)
+        const green = Math.floor((index % 36) / 6)
+        const blue = index % 6
+        const channel = item => item === 0 ? 0 : 55 + item * 40
+        return `rgb(${channel(red)}, ${channel(green)}, ${channel(blue)})`
+      }
+
+      function applyAnsiCodes(style, codes) {
+        for (let index = 0; index < codes.length; index += 1) {
+          const code = codes[index]
+          if (code === 0) {
+            Object.keys(style).forEach(key => delete style[key])
+          } else if (code === 1) style.fontWeight = '700'
+          else if (code === 2) style.opacity = '.75'
+          else if (code === 3) style.fontStyle = 'italic'
+          else if (code === 4) style.textDecoration = 'underline'
+          else if (code === 22) {
+            delete style.fontWeight
+            delete style.opacity
+          } else if (code === 23) delete style.fontStyle
+          else if (code === 24) delete style.textDecoration
+          else if (code === 39) delete style.color
+          else if (code === 49) delete style.backgroundColor
+          else if (ansiColors[code]) style.color = ansiColors[code]
+          else if (ansiColors[code - 10]) style.backgroundColor = ansiColors[code - 10]
+          else if (code === 38 || code === 48) {
+            const property = code === 38 ? 'color' : 'backgroundColor'
+            const mode = codes[index + 1]
+            if (mode === 5 && codes[index + 2] !== undefined) {
+              style[property] = ansi256Color(codes[index + 2])
+              index += 2
+            } else if (mode === 2 && codes.length > index + 4) {
+              style[property] = `rgb(${codes[index + 2]}, ${codes[index + 3]}, ${codes[index + 4]})`
+              index += 4
+            }
+          }
+        }
+      }
+
+      function appendTextWithHighlight(node, value, keyword) {
+        if (!keyword) {
+          node.append(document.createTextNode(value))
+          return
+        }
+        const regex = new RegExp(`(${escapeRegExp(keyword)})`, 'ig')
+        let cursor = 0
+        for (const match of value.matchAll(regex)) {
+          const start = match.index
+          node.append(document.createTextNode(value.slice(cursor, start)))
+          const mark = document.createElement('mark')
+          mark.textContent = match[0]
+          node.append(mark)
+          cursor = start + match[0].length
+        }
+        node.append(document.createTextNode(value.slice(cursor)))
+      }
+
+      function trimLinkPunctuation(value) {
+        return value.replace(/[.,;!?，。；！？、)\]}]+$/g, '')
+      }
+
+      function appendLinkifiedText(node, value, style, keyword, options = {}) {
+        const linkPattern = /https?:\/\/[^\s"'<>]+|\/(?:[^/\s"'<>]+\/)+[^/\s"'<>]+|(?:\.\.?\/)+[^\s"'<>]+/g
+        let cursor = 0
+        for (const match of value.matchAll(linkPattern)) {
+          const start = match.index
+          const candidate = trimLinkPunctuation(match[0])
+          const linkEnd = start + candidate.length
+          appendTextWithHighlight(
+            node,
+            value.slice(cursor, start),
+            keyword
+          )
+          const link = document.createElement('a')
+          const lineMatch = candidate.startsWith('http')
+            ? null
+            : candidate.match(/^(.*?):(\d+)(?::\d+)?$/)
+          const linkTarget = lineMatch ? lineMatch[1] : candidate
+          const lineNumber = lineMatch && lineMatch[2]
+          const isWebLink = linkTarget.startsWith('http')
+          const isRelativePath = /^(?:\.\.?\/)+/.test(linkTarget)
+          const resolvedPath = isRelativePath && options.baseDirectory
+            ? new URL(
+              linkTarget,
+              `file://${options.baseDirectory.replace(/\/$/, '')}/`
+            ).pathname
+            : linkTarget
+          link.href = isWebLink
+            ? linkTarget
+            : `/api/open-file?path=${encodeURIComponent(resolvedPath)}${
+              lineNumber ? `&line=${lineNumber}` : ''
+            }`
+          if (!isWebLink) {
+            link.addEventListener('click', event => {
+              event.preventDefault()
+              fetch(link.href).catch(() => {})
+            })
+          }
+          if (lineNumber) {
+            link.title = `在 VS Code 中打开，第 ${lineNumber} 行`
+          } else if (!isWebLink) {
+            link.title = '在 VS Code 中打开文件'
+          }
+          link.target = '_blank'
+          link.rel = 'noreferrer'
+          link.className = 'log-link'
+          Object.assign(link.style, style)
+          appendTextWithHighlight(link, candidate, keyword)
+          node.append(link)
+          cursor = linkEnd
+        }
+        appendTextWithHighlight(node, value.slice(cursor), keyword)
+      }
+
+      function renderAnsiText(node, value, keyword = '', options = {}) {
+        const text = normalizeAnsi(String(value))
+        const ansiPattern = /\u001b\[([0-9;]*)m/g
+        const style = {}
+        let cursor = 0
+        for (const match of text.matchAll(ansiPattern)) {
+          appendStyledText(node, text.slice(cursor, match.index), style, keyword, options)
+          const codes = match[1] ? match[1].split(';').map(Number) : [0]
+          applyAnsiCodes(style, codes)
+          cursor = match.index + match[0].length
+        }
+        appendStyledText(node, text.slice(cursor), style, keyword, options)
+      }
+
+      function appendStyledText(node, value, style, keyword, options = {}) {
+        if (!value) return
+        const span = document.createElement('span')
+        Object.assign(span.style, style)
+        if (options.linkify) {
+          appendLinkifiedText(span, value, style, keyword, options)
+        }
+        else appendTextWithHighlight(span, value, keyword)
+        node.append(span)
+      }
+
+      function setHighlightedText(node, value, keyword) {
+        node.replaceChildren()
+        renderAnsiText(node, value, keyword)
+      }
+
+      function stripAnsi(value) {
+        return normalizeAnsi(String(value)).replace(/\u001b\[[0-9;]*m/g, '')
+      }
+
+      function truncateAnsiText(value, limit) {
+        const text = normalizeAnsi(String(value))
+        const visibleText = stripAnsi(text)
+        const visibleChars = Array.from(visibleText)
+        if (visibleChars.length <= limit) return text
+
+        const ansiPattern = /\u001b\[[0-9;]*m/g
+        let result = ''
+        let visibleCount = 0
+        let cursor = 0
+        while (cursor < text.length && visibleCount < limit) {
+          ansiPattern.lastIndex = cursor
+          const ansiMatch = ansiPattern.exec(text)
+          if (ansiMatch && ansiMatch.index === cursor) {
+            result += ansiMatch[0]
+            cursor += ansiMatch[0].length
+            continue
+          }
+          const codePoint = Array.from(text.slice(cursor))[0]
+          result += codePoint
+          cursor += codePoint.length
+          visibleCount += 1
+        }
+        return `${result}\u001b[0m…`
+      }
+
+      function shouldExpandEntry(entry, keyword) {
+        const normalizedKeyword = keyword.trim().toLowerCase()
+        if (!normalizedKeyword) return false
+        const fullMessage = stripAnsi(entry.message).toLowerCase()
+        const preview = stripAnsi(truncateAnsiText(entry.message, 250)).toLowerCase()
+        return fullMessage.includes(normalizedKeyword) &&
+          !preview.includes(normalizedKeyword)
+      }
+
+      function getKeyword() {
+        return searchNode.value.trim()
+      }
+
+      function getVisibleEntries() {
+        const keyword = getKeyword().toLowerCase()
+        return state.entries.filter(entry => {
+          const levelMatched = state.selectedLevels.size === 0 || state.selectedLevels.has(entry.level)
+          const content = `${entry.source} ${entry.message}`.toLowerCase()
+          return levelMatched && (!keyword || content.includes(keyword))
+        })
+      }
+
+      function createLogEntry(entry) {
+        const article = document.createElement('article')
+        article.className = `entry ${entry.level}`
+        article.addEventListener('click', () => openDrawer(entry))
+
+        const head = document.createElement('div')
+        head.className = 'entry-head'
+        const level = document.createElement('span')
+        level.className = `entry-level ${entry.level}`
+        level.textContent = entry.level
+        const source = document.createElement('span')
+        source.className = 'entry-source'
+        setHighlightedText(source, entry.source, getKeyword())
+        const time = document.createElement('time')
+        time.className = 'entry-time'
+        time.textContent = formatTime(entry.time)
+        head.append(level, source, time)
+
+        const message = document.createElement('div')
+        message.className = 'entry-message'
+        const keyword = getKeyword()
+        const expanded = shouldExpandEntry(entry, keyword)
+        const preview = expanded
+          ? entry.message
+          : truncateAnsiText(entry.message, 250)
+        if (expanded) article.classList.add('expanded')
+        renderAnsiText(message, preview, keyword)
+        article.append(head, message)
+        return article
+      }
+
+      function updateFilterControls() {
+        const counts = { log: 0, warn: 0, error: 0 }
+        for (const entry of state.entries) counts[entry.level] = (counts[entry.level] || 0) + 1
+        for (const button of levelFilters) {
+          const level = button.dataset.levelFilter
+          const count = level === 'all' ? state.entries.length : counts[level] || 0
+          button.querySelector('span').textContent = count
+          button.disabled = count === 0
+          button.classList.toggle('active', level === 'all'
+            ? state.selectedLevels.size === 0
+            : state.selectedLevels.has(level))
+        }
+      }
+
+      function renderLog() {
+        updateFilterControls()
+        const visible = getVisibleEntries()
+        entryList.replaceChildren(...visible.map(createLogEntry))
+        emptyNode.hidden = visible.length > 0
+        emptyNode.textContent = state.entries.length === 0
+          ? '等待 RN 日志……'
+          : '没有符合当前 filter 的内容'
+        $('#clear').disabled = state.entries.length === 0
+        $('#export').disabled = visible.length === 0
+        if (state.autoScroll && state.activeView === 'log') {
+          entryList.parentElement.scrollTop = entryList.parentElement.scrollHeight
+        }
+      }
+
+      function addEntry(entry) {
+        const signature = [entry.source, entry.level, entry.message].join('\u0000')
+        if (
+          (entry.id && state.entryIds.has(entry.id)) ||
+          state.entrySignatures.has(signature)
+        ) return
+        if (entry.id) state.entryIds.add(entry.id)
+        state.entrySignatures.add(signature)
+        state.entries.push(entry)
+        if (state.entries.length > 2000) {
+          const removed = state.entries.shift()
+          if (removed.id) state.entryIds.delete(removed.id)
+          state.entrySignatures.delete(
+            [removed.source, removed.level, removed.message].join('\u0000')
+          )
+        }
+        scheduleRender()
+      }
+
+      function scheduleRender() {
+        if (state.renderScheduled) return
+        state.renderScheduled = true
+        requestAnimationFrame(() => {
+          state.renderScheduled = false
+          renderLog()
+          renderDashboard()
+        })
+      }
+
+      function updateReplayProgress(current, total) {
+        state.replayCurrent = current
+        state.replayTotal = total
+        const percentage = total ? Math.min(100, current / total * 100) : 100
+        $('#progressBar').style.width = `${percentage}%`
+        $('#progressText').textContent = `${current}/${total}`
+      }
+
+      function startReplay(total) {
+        state.replaying = true
+        updateReplayProgress(0, total)
+        $('#connection').textContent = '连接中'
+        $('#connection').classList.remove('online')
+        $('#connectionProgress').hidden = false
+      }
+
+      function finishReplay(total) {
+        updateReplayProgress(total, total)
+        state.replaying = false
+        $('#connectionProgress').hidden = true
+        $('#connection').textContent = '已连接'
+        $('#connection').classList.add('online')
+      }
+
+      function renderConsole() {
+        const recent = state.entries.slice(-80)
+        $('#consoleCount').textContent = `${state.entries.length} 条`
+        $('#consoleOutput').replaceChildren(...recent.map(entry => {
+          const line = document.createElement('div')
+          line.className = 'console-line'
+          const time = document.createElement('span')
+          time.className = 'console-time'
+          time.textContent = formatTime(entry.time)
+          const level = document.createElement('span')
+          level.className = `console-level ${entry.level}`
+          level.textContent = entry.level
+          const source = document.createElement('span')
+          source.className = 'console-source'
+          source.textContent = entry.source
+          const message = document.createElement('span')
+          message.className = 'console-message'
+          renderAnsiText(message, entry.message)
+          line.append(time, level, source, message)
+          return line
+        }))
+        if (state.activeView === 'dashboard') {
+          const consoleNode = $('#consoleOutput')
+          consoleNode.scrollTop = consoleNode.scrollHeight
+        }
+      }
+
+      function addTableRow(values) {
+        const row = document.createElement('tr')
+        for (const value of values) {
+          const cell = document.createElement('td')
+          cell.textContent = value
+          row.append(cell)
+        }
+        return row
+      }
+
+      function renderDashboardTable() {
+        const head = $('#tableHead')
+        const body = $('#tableBody')
+        body.replaceChildren()
+        if (state.tableMode === 'levels') {
+          head.innerHTML = '<tr><th>级别</th><th>数量</th><th>占比</th></tr>'
+          const counts = { log: 0, warn: 0, error: 0 }
+          for (const entry of state.entries) counts[entry.level] = (counts[entry.level] || 0) + 1
+          for (const level of ['log', 'warn', 'error']) {
+            const ratio = state.entries.length ? `${Math.round(counts[level] / state.entries.length * 100)}%` : '0%'
+            body.append(addTableRow([level, counts[level], ratio]))
+          }
+          return
+        }
+        if (state.tableMode === 'sources') {
+          head.innerHTML = '<tr><th>来源</th><th>数量</th><th>最新时间</th></tr>'
+          const sources = new Map()
+          for (const entry of state.entries) {
+            const current = sources.get(entry.source) || { count: 0, time: entry.time }
+            sources.set(entry.source, { count: current.count + 1, time: entry.time })
+          }
+          for (const [source, item] of sources) {
+            body.append(addTableRow([source, item.count, formatTime(item.time)]))
+          }
+        } else {
+          head.innerHTML = '<tr><th>时间</th><th>级别</th><th>来源</th><th>内容</th></tr>'
+          for (const entry of state.entries.slice(-20).reverse()) {
+            body.append(addTableRow([
+              formatTime(entry.time),
+              entry.level,
+              entry.source,
+              entry.message,
+            ]))
+          }
+        }
+        if (!body.children.length) {
+          const row = document.createElement('tr')
+          const cell = document.createElement('td')
+          cell.colSpan = 4
+          cell.className = 'muted'
+          cell.textContent = '暂无数据'
+          row.append(cell)
+          body.append(row)
+        }
+      }
+
+      function renderDashboard() {
+        renderConsole()
+        renderDashboardTable()
+      }
+
+      function updateControlButtons() {
+        $('#startRn').disabled = state.controlBusy || state.devRunning
+        $('#stopRn').disabled = state.controlBusy || !state.devRunning
+        $('#restartRn').disabled = state.controlBusy || !state.devRunning
+        $('#controlState').textContent = state.devRunning ? '运行中' : '未运行'
+        $('#controlState').className = state.devRunning ? 'status-value running' : 'status-value stopped'
+        $('#statusRn').textContent = state.devRunning ? '运行中' : '未运行'
+        $('#statusRn').className = state.devRunning ? 'status-value running' : 'status-value stopped'
+      }
+
+      async function refreshStatus() {
+        try {
+          const response = await fetch('/api/status')
+          const status = await response.json()
+          state.devRunning = Boolean(status.devRunning)
+          $('#devCwd').textContent = status.devCwd || '未配置'
+          $('#statusEntries').textContent = status.entries
+          $('#statusClients').textContent = status.clients
+          updateControlButtons()
+        } catch {
+          $('#connection').textContent = '服务不可用'
+          $('#connection').classList.remove('online')
+        }
+      }
+
+      async function controlRn(action) {
+        if (state.controlBusy) return
+        state.controlBusy = true
+        updateControlButtons()
+        try {
+          const response = await fetch(`/api/dev/${action}`, { method: 'POST' })
+          if (!response.ok) throw new Error(await response.text())
+        } catch (error) {
+          addEntry({
+            id: `control-${Date.now()}`,
+            time: new Date().toISOString(),
+            level: 'error',
+            source: 'dashboard',
+            message: `RN 控制失败: ${error.message}`,
+          })
+        } finally {
+          state.controlBusy = false
+          await refreshStatus()
+          updateControlButtons()
+        }
+      }
+
+      function openDrawer(entry) {
+        state.drawerEntry = entry
+        state.drawerFormatted = true
+        $('#drawerLevel').textContent = entry.level
+        $('#drawerLevel').className = `entry-level ${entry.level}`
+        $('#drawerSource').textContent = entry.source
+        $('#drawerTime').textContent = formatDate(entry.time)
+        $('#drawerId').textContent = entry.id
+        renderDrawerMessage()
+        $('#drawerBackdrop').hidden = false
+        $('#drawer').hidden = false
+      }
+
+      function closeDrawer() {
+        $('#drawerBackdrop').hidden = true
+        $('#drawer').hidden = true
+        state.drawerEntry = null
+        state.drawerFormatted = false
+      }
+
+      function decodeEscapedText(value) {
+        return value
+          .replace(/\\r\\n/g, '\n')
+          .replace(/\\n/g, '\n')
+          .replace(/\\t/g, '\t')
+      }
+
+      function formatDrawerText(value) {
+        const normalized = normalizeAnsi(String(value))
+        try {
+          const parsed = JSON.parse(normalized)
+          return decodeEscapedText(JSON.stringify(parsed, null, 2))
+        } catch {
+          return decodeEscapedText(normalized)
+        }
+      }
+
+      function getDrawerText() {
+        if (!state.drawerEntry) return ''
+        return state.drawerFormatted
+          ? formatDrawerText(state.drawerEntry.message)
+          : state.drawerEntry.message
+      }
+
+      function getDrawerBaseDirectory() {
+        if (!state.drawerEntry) return ''
+        try {
+          const parsed = JSON.parse(normalizeAnsi(state.drawerEntry.message))
+          const origin = parsed.originModulePath
+          if (typeof origin !== 'string') return ''
+          return origin.slice(0, origin.lastIndexOf('/'))
+        } catch {
+          return ''
+        }
+      }
+
+      function renderDrawerMessage() {
+        const messageNode = $('#drawerMessage')
+        messageNode.replaceChildren()
+        renderAnsiText(messageNode, getDrawerText(), '', {
+          linkify: true,
+          baseDirectory: getDrawerBaseDirectory(),
+        })
+        $('#formatLog').textContent = state.drawerFormatted ? '显示原文' : '格式化'
+      }
+
+      function toggleDrawerFormat() {
+        if (!state.drawerEntry) return
+        state.drawerFormatted = !state.drawerFormatted
+        renderDrawerMessage()
+      }
+
+      function setActiveView(viewName) {
+        state.activeView = viewName
+        document.querySelectorAll('[data-view]').forEach(node => {
+          node.classList.toggle('active', node.dataset.view === viewName)
+        })
+        $('#dashboardView').classList.toggle('active', viewName === 'dashboard')
+        $('#logView').classList.toggle('active', viewName === 'log')
+        if (viewName === 'log') renderLog()
+        if (viewName === 'dashboard') renderDashboard()
+      }
+
+      async function copyDrawerLog() {
+        if (!state.drawerEntry) return
+        const copyButton = $('#copyLog')
+        try {
+          await navigator.clipboard.writeText(getDrawerText())
+        } catch {
+          const textarea = document.createElement('textarea')
+          textarea.value = getDrawerText()
+          document.body.append(textarea)
+          textarea.select()
+          document.execCommand('copy')
+          textarea.remove()
+        }
+        copyButton.textContent = '已复制'
+        setTimeout(() => { copyButton.textContent = '复制日志' }, 1200)
+      }
+
+      document.querySelectorAll('[data-view]').forEach(button => {
+        button.addEventListener('click', () => {
+          setActiveView(button.dataset.view)
+        })
+      })
+      $('#sidebarToggle').addEventListener('click', () => $('#sidebar').classList.toggle('collapsed'))
+      $('#tableMode').addEventListener('change', event => {
+        state.tableMode = event.target.value
+        renderDashboardTable()
+      })
+      $('#startRn').addEventListener('click', () => controlRn('start'))
+      $('#stopRn').addEventListener('click', () => controlRn('stop'))
+      $('#restartRn').addEventListener('click', () => controlRn('restart'))
+      searchNode.addEventListener('input', renderLog)
+      levelFilters.forEach(button => {
+        button.addEventListener('click', () => {
+          const level = button.dataset.levelFilter
+          const count = Number(button.querySelector('span').textContent)
+          if (count === 0) return
+          if (level === 'all') state.selectedLevels.clear()
+          else if (state.selectedLevels.has(level)) state.selectedLevels.delete(level)
+          else state.selectedLevels.add(level)
+          setActiveView('log')
+          $('#entryList').scrollIntoView({ block: 'start' })
+        })
+      })
+      $('#pause').addEventListener('click', event => {
+        state.autoScroll = !state.autoScroll
+        event.currentTarget.textContent = state.autoScroll ? '暂停滚动' : '恢复滚动'
+        event.currentTarget.classList.toggle('active', !state.autoScroll)
+      })
+      $('#clear').addEventListener('click', () => {
+        state.entries.length = 0
+        state.entryIds.clear()
+        state.entrySignatures.clear()
+        renderLog()
+        renderDashboard()
+      })
+      $('#export').addEventListener('click', () => {
+        const blob = new Blob([JSON.stringify(getVisibleEntries(), null, 2)], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `rn-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
+        link.click()
+        URL.revokeObjectURL(url)
+      })
+      $('#drawerClose').addEventListener('click', closeDrawer)
+      $('#drawerBackdrop').addEventListener('click', closeDrawer)
+      $('#formatLog').addEventListener('click', toggleDrawerFormat)
+      $('#copyLog').addEventListener('click', copyDrawerLog)
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') closeDrawer()
+      })
+
+      fetch('/api/status').then(response => response.json()).then(status => {
+        $('#devCwd').textContent = status.devCwd || '未配置'
+        refreshStatus()
+      }).catch(() => {})
+      setInterval(refreshStatus, 1200)
+
+      const eventSource = new EventSource('/events')
+      eventSource.onopen = () => {
+        if (!state.replaying) {
+          $('#connection').textContent = '已连接'
+          $('#connection').classList.add('online')
+        }
+      }
+      eventSource.onmessage = event => addEntry(JSON.parse(event.data))
+      eventSource.addEventListener('replay-start', event => {
+        startReplay(JSON.parse(event.data).total)
+      })
+      eventSource.addEventListener('replay-progress', event => {
+        const progress = JSON.parse(event.data)
+        updateReplayProgress(progress.current, progress.total)
+      })
+      eventSource.addEventListener('replay-end', event => {
+        finishReplay(JSON.parse(event.data).total)
+      })
+      eventSource.addEventListener('reload', () => window.location.reload())
+      eventSource.onerror = () => {
+        $('#connection').textContent = '连接断开，重试中'
+        $('#connection').classList.remove('online')
+      }
+
+      renderLog()
+      renderDashboard()
+    </script>
+  </body>
+</html>
