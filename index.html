@@ -554,6 +554,8 @@
         virtualRenderScheduled: false,
         deferredEntryIds: new Set(),
         pendingUpdates: new Map(),
+        visibleEntriesCache: new Map(),
+        searchTextCache: new WeakMap(),
         renderScrollToBottom: undefined,
       }
 
@@ -795,26 +797,35 @@
         return `${result}\u001b[0m…`
       }
 
-      function shouldExpandEntry(entry, keyword) {
-        const normalizedKeyword = keyword.trim().toLowerCase()
-        if (!normalizedKeyword) return false
-        const fullMessage = stripAnsi(entry.message).toLowerCase()
-        const preview = stripAnsi(truncateAnsiText(entry.message, 250)).toLowerCase()
-        return fullMessage.includes(normalizedKeyword) &&
-          !preview.includes(normalizedKeyword)
-      }
-
       function getKeyword() {
         return searchNode.value.trim()
       }
 
+      function getEntrySearchText(entry) {
+        if (state.searchTextCache.has(entry)) {
+          return state.searchTextCache.get(entry)
+        }
+        return cacheEntrySearchText(entry)
+      }
+
+      function cacheEntrySearchText(entry) {
+        const text = `${entry.source} ${entry.message}`.toLowerCase()
+        state.searchTextCache.set(entry, text)
+        return text
+      }
+
       function getVisibleEntries() {
         const keyword = getKeyword().toLowerCase()
-        return state.entries.filter(entry => {
+        const levels = [...state.selectedLevels].sort().join(',')
+        const cacheKey = `${levels}|${keyword}`
+        const cached = state.visibleEntriesCache.get(cacheKey)
+        if (cached) return cached
+        const visible = state.entries.filter(entry => {
           const levelMatched = state.selectedLevels.size === 0 || state.selectedLevels.has(entry.level)
-          const content = `${entry.source} ${entry.message}`.toLowerCase()
-          return levelMatched && (!keyword || content.includes(keyword))
+          return levelMatched && (!keyword || getEntrySearchText(entry).includes(keyword))
         })
+        state.visibleEntriesCache.set(cacheKey, visible)
+        return visible
       }
 
       function getRenderableEntries() {
@@ -846,20 +857,14 @@
         const message = document.createElement('div')
         message.className = 'entry-message'
         const keyword = getKeyword()
-        const expanded = shouldExpandEntry(entry, keyword)
-        const preview = expanded
-          ? entry.message
-          : truncateAnsiText(entry.message, 250)
-        if (expanded) article.classList.add('expanded')
+        const preview = truncateAnsiText(entry.message, 250)
         renderAnsiText(message, preview, keyword)
         article.append(head, message)
         return article
       }
 
       function getVirtualKey(entry) {
-        const keyword = getKeyword().toLowerCase()
-        const expanded = shouldExpandEntry(entry, keyword)
-        return [entry.id, keyword, expanded, state.compactMode, entry.message.length].join('|')
+        return [entry.id, state.compactMode, entry.message.length].join('|')
       }
 
       function estimateEntryHeight(entry) {
@@ -1031,6 +1036,8 @@
         if (entry.id) state.entryIds.add(entry.id)
         state.entrySignatures.add(signature)
         state.entries.push(entry)
+        cacheEntrySearchText(entry)
+        state.visibleEntriesCache.clear()
         if (state.refreshPaused) state.deferredEntryIds.add(entry.id)
         else state.deferredEntryIds.clear()
         if (state.entries.length > 2000) {
@@ -1062,6 +1069,8 @@
           [entry.source, entry.level, entry.message].join('\u0000')
         )
         entry.message = update.message
+        cacheEntrySearchText(entry)
+        state.visibleEntriesCache.clear()
         state.virtualHeights.clear()
         state.entrySignatures.add(
           [entry.source, entry.level, entry.message].join('\u0000')
@@ -1324,7 +1333,7 @@
       function renderDrawerMessage() {
         const messageNode = $('#drawerMessage')
         messageNode.replaceChildren()
-        renderAnsiText(messageNode, getDrawerText(), '', {
+        renderAnsiText(messageNode, getDrawerText(), getKeyword(), {
           linkify: true,
           baseDirectory: getDrawerBaseDirectory(),
         })
@@ -1392,8 +1401,8 @@
         setCompactMode(event.currentTarget.checked)
       })
       searchNode.addEventListener('input', () => {
-        state.virtualHeights.clear()
         renderLog()
+        if (state.drawerEntry) renderDrawerMessage()
       })
       levelFilters.forEach(button => {
         button.addEventListener('click', () => {
@@ -1403,9 +1412,7 @@
           if (level === 'all') state.selectedLevels.clear()
           else if (state.selectedLevels.has(level)) state.selectedLevels.delete(level)
           else state.selectedLevels.add(level)
-          state.virtualHeights.clear()
           setActiveView('log')
-          logList.scrollTop = logList.scrollHeight
         })
       })
       $('#pause').addEventListener('click', event => {
@@ -1423,6 +1430,8 @@
         state.entries.length = 0
         state.entryIds.clear()
         state.entrySignatures.clear()
+        state.visibleEntriesCache.clear()
+        state.searchTextCache = new WeakMap()
         state.virtualEntries = []
         state.virtualHeights.clear()
         state.deferredEntryIds.clear()
