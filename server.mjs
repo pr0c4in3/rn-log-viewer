@@ -19,6 +19,7 @@ const port = readOption('--port', 4319)
 const inputFile = readOption('--file')
 const repoDir = readOption('--cwd', process.cwd())
 const startDev = args.includes('--dev')
+const quietMode = args.includes('--quiet') || args.includes('--silent')
 
 const clients = new Map()
 const history = []
@@ -155,9 +156,11 @@ function flushLogBuffers() {
 
 function forwardDevOutput(chunk, output, channel) {
   const text = chunk.toString().replace(/\r\n/g, '\n')
-  for (const line of text.split('\n')) {
-    if (!line) continue
-    output.write(`[RN/${channel}] ${line}\n`)
+  if (!quietMode) {
+    for (const line of text.split('\n')) {
+      if (!line) continue
+      output.write(`[RN/${channel}] ${line}\n`)
+    }
   }
   publishChunk(chunk, `rn-${channel}`)
 }
@@ -439,6 +442,7 @@ const server = createServer((request, response) => {
 server.listen(port, '127.0.0.1', () => {
   console.log(`[RN Log Viewer] 网页地址: http://127.0.0.1:${port}`)
   console.log(`[RN Log Viewer] 模式: ${startDev ? '代理启动 pnpm dev' : '日志接收'}`)
+  if (quietMode) console.log('[RN Log Viewer] RN 终端输出: 已关闭，网页收集保持开启')
   console.log('[RN Log Viewer] 前端页面热更新: 已开启')
   startPageHotReload()
   if (startDev) startDevProcess()

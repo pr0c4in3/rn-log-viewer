@@ -19,6 +19,14 @@ npm install --global .
 rn-log-viewer --dev --cwd "$PWD"
 ```
 
+如果不想在当前终端打印 RN 的 stdout/stderr，可以使用静默模式；网页仍会继续收集和展示：
+
+```sh
+rn-log-viewer --dev --quiet --cwd "$PWD"
+```
+
+`--silent` 是 `--quiet` 的同义参数。静默模式只隐藏 RN 日志，工具自身的启动、退出和错误信息仍会打印。
+
 如果发布到 npm registry，也可以直接使用：
 
 ```sh
@@ -38,7 +46,7 @@ node ~/tools/rn-log-viewer/server.mjs --dev --cwd /Users/yuheng.zhang/work/rn
 
 然后打开 <http://127.0.0.1:4319>。
 
-`--dev` 模式下，工具会持续把 RN 的 stdout/stderr 以 `[RN/stdout]` 或 `[RN/stderr]` 前缀打印到当前终端，并推送到网页 Dashboard 控制台；终端还会打印网页地址、工作目录和 RN 进程退出状态。
+`--dev` 模式下，工具会持续把 RN 的 stdout/stderr 以 `[RN/stdout]` 或 `[RN/stderr]` 前缀打印到当前终端，并推送到网页 Dashboard 控制台；终端还会打印网页地址、工作目录和 RN 进程退出状态。使用 `--quiet` 或 `--silent` 时只关闭 RN 终端输出，不影响网页收集。
 
 网页服务会监听 `index.html` 的变化。修改前端页面后，浏览器会自动刷新，无需手动刷新页面；已收集的日志仍保存在服务端内存中，并会在刷新后回放。
 
@@ -46,7 +54,7 @@ node ~/tools/rn-log-viewer/server.mjs --dev --cwd /Users/yuheng.zhang/work/rn
 
 ## 网页功能
 
-- `Dashboard`：实时控制台、最新日志/级别统计/来源统计表格，以及 RN 启动、停止、重启控制；RN ANSI 颜色会在网页中还原。
+- `Dashboard`：实时控制台、最新日志/级别统计/来源统计表格，以及 RN 启动、停止控制；RN ANSI 颜色会在网页中还原。
 - `Log`：紧凑日志列表、Log/Warn/Error 多选 filter、搜索高亮、底部操作栏和 JSON 导出。
 - Log 列表使用动态虚拟滚动，只渲染可视区域及上下缓冲区；日志高度会在实际渲染后缓存，搜索展开、窗口尺寸变化和内容追加时自动重新测量。
 - 只识别行首的 `LOG`、`WARN`、`ERROR` 作为新日志边界。出现边界时新增一项并按标记设置级别；首次出现边界前，每行都作为 `log` 单独记录；首次出现边界后，不带这三个标记的行会实时追加到上一项，详情中保留原始换行。

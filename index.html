@@ -248,7 +248,6 @@
       .control-button { padding: 9px 13px; }
       .control-button.start { border-color: rgba(70, 212, 131, .45); color: var(--green); }
       .control-button.stop { border-color: rgba(255, 107, 105, .45); color: var(--red); }
-      .control-button.restart { border-color: rgba(231, 180, 77, .45); color: var(--yellow); }
       .control-hint { width: 100%; color: var(--muted); font-size: 12px; }
       .status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
       .status-item { padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-strong); }
@@ -405,7 +404,6 @@
               <div class="card-body control-body">
                 <button id="startRn" class="control-button start" type="button">启动 RN</button>
                 <button id="stopRn" class="control-button stop" type="button">停止 RN</button>
-                <button id="restartRn" class="control-button restart" type="button">重启 RN</button>
                 <p class="control-hint">工作目录：<span id="devCwd">读取中……</span></p>
               </div>
             </article>
@@ -1069,7 +1067,6 @@
       function updateControlButtons() {
         $('#startRn').disabled = state.controlBusy || state.devRunning
         $('#stopRn').disabled = state.controlBusy || !state.devRunning
-        $('#restartRn').disabled = state.controlBusy || !state.devRunning
         $('#controlState').textContent = state.devRunning ? '运行中' : '未运行'
         $('#controlState').className = state.devRunning ? 'status-value running' : 'status-value stopped'
         $('#statusRn').textContent = state.devRunning ? '运行中' : '未运行'
@@ -1216,7 +1213,6 @@
       })
       $('#startRn').addEventListener('click', () => controlRn('start'))
       $('#stopRn').addEventListener('click', () => controlRn('stop'))
-      $('#restartRn').addEventListener('click', () => controlRn('restart'))
       searchNode.addEventListener('input', () => {
         state.virtualHeights.clear()
         renderLog()
