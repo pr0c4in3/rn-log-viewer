@@ -1,0 +1,20 @@
+{
+  "name": "rn-log-viewer",
+  "version": "0.1.0",
+  "description": "Local web viewer for React Native development logs",
+  "type": "module",
+  "bin": {
+    "rn-log-viewer": "./server.mjs"
+  },
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "files": [
+    "server.mjs",
+    "index.html",
+    "README.md"
+  ]
+}

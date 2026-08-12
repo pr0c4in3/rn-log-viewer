@@ -100,51 +100,24 @@ function forwardDevOutput(chunk, output, channel) {
 
 function openInVsCode(filePath, lineNumber) {
   const target = lineNumber ? `${filePath}:${lineNumber}` : filePath
-  let fallbackStarted = false
-  let editorProcess
   try {
-    editorProcess = spawn('code', ['--reuse-window', '--goto', target], {
+    const editorProcess = spawn('code', ['--reuse-window', '--goto', target], {
       detached: true,
       stdio: 'ignore',
     })
-  } catch {
-    editorProcess = null
-  }
-
-  const fallback = () => {
-    if (fallbackStarted) return
-    fallbackStarted = true
-    try {
-      const fallbackProcess = spawn(
-        'open',
-        [
-          '-a',
-          'Visual Studio Code',
-          '--args',
-          '--reuse-window',
-          '--goto',
-          target,
-        ],
-        { detached: true, stdio: 'ignore' }
-      )
-      fallbackProcess.unref()
-    } catch (error) {
-      publish(`无法打开 VS Code: ${error.message}`, {
+    editorProcess.once('error', error => {
+      publish(`无法通过 code CLI 打开 VS Code: ${error.message}`, {
         source: 'launcher',
         level: 'error',
       })
-    }
+    })
+    editorProcess.unref()
+  } catch (error) {
+    publish(`无法通过 code CLI 打开 VS Code: ${error.message}`, {
+      source: 'launcher',
+      level: 'error',
+    })
   }
-
-  if (!editorProcess) {
-    fallback()
-    return
-  }
-  editorProcess.once('error', fallback)
-  editorProcess.once('close', code => {
-    if (code !== 0) fallback()
-  })
-  editorProcess.unref()
 }
 
 function startFileTail(filePath) {

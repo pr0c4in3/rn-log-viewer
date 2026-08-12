@@ -576,6 +576,20 @@
         return value.replace(/[.,;!?，。；！？、)\]}]+$/g, '')
       }
 
+      async function copyText(value) {
+        try {
+          await navigator.clipboard.writeText(value)
+          return
+        } catch {
+          const textarea = document.createElement('textarea')
+          textarea.value = value
+          document.body.append(textarea)
+          textarea.select()
+          document.execCommand('copy')
+          textarea.remove()
+        }
+      }
+
       function appendLinkifiedText(node, value, style, keyword, options = {}) {
         const linkPattern = /https?:\/\/[^\s"'<>]+|\/(?:[^/\s"'<>]+\/)+[^/\s"'<>]+|(?:\.\.?\/)+[^\s"'<>]+/g
         let cursor = 0
@@ -610,16 +624,25 @@
           if (!isWebLink) {
             link.addEventListener('click', event => {
               event.preventDefault()
-              fetch(link.href).catch(() => {})
+              if (event.metaKey && event.button === 0) {
+                fetch(link.href).catch(() => {})
+                return
+              }
+              copyText(lineNumber ? `${resolvedPath}:${lineNumber}` : resolvedPath)
             })
           }
           if (lineNumber) {
-            link.title = `在 VS Code 中打开，第 ${lineNumber} 行`
+            link.title = isWebLink
+              ? ''
+              : '点击复制路径，⌘+点击在 VS Code 中打开第 '
+                + `${lineNumber} 行`
           } else if (!isWebLink) {
-            link.title = '在 VS Code 中打开文件'
+            link.title = '点击复制路径，⌘+点击在 VS Code 中打开文件'
           }
-          link.target = '_blank'
-          link.rel = 'noreferrer'
+          if (isWebLink) {
+            link.target = '_blank'
+            link.rel = 'noreferrer'
+          }
           link.className = 'log-link'
           Object.assign(link.style, style)
           appendTextWithHighlight(link, candidate, keyword)
@@ -1045,16 +1068,7 @@
       async function copyDrawerLog() {
         if (!state.drawerEntry) return
         const copyButton = $('#copyLog')
-        try {
-          await navigator.clipboard.writeText(getDrawerText())
-        } catch {
-          const textarea = document.createElement('textarea')
-          textarea.value = getDrawerText()
-          document.body.append(textarea)
-          textarea.select()
-          document.execCommand('copy')
-          textarea.remove()
-        }
+        await copyText(getDrawerText())
         copyButton.textContent = '已复制'
         setTimeout(() => { copyButton.textContent = '复制日志' }, 1200)
       }

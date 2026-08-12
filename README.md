@@ -1,15 +1,40 @@
 # RN Log Viewer
 
-用于在网页中实时查看 Lucky Video RN 开发日志。工具只使用 Node.js 内置模块，不会修改 RN 业务代码，也不会上传日志。
+RN 开发日志。工具只使用 Node.js 内置模块，不会修改 RN 业务代码，也不会上传日志。
 
 ## 启动方式
 
-在 RN 仓库目录执行：
+### npm CLI 一键启动
+
+进入工具目录后，将它安装为全局 npm CLI：
+
+```sh
+cd rn-log-viewer
+npm install --global .
+```
+
+然后在 RN 仓库目录执行：
+
+```sh
+rn-log-viewer --dev --cwd "$PWD"
+```
+
+如果发布到 npm registry，也可以直接使用：
+
+```sh
+npx rn-log-viewer --dev --cwd "$PWD"
+```
+
+### Node 方式启动
+
+不安装 npm CLI 时，仍可以直接执行：
 
 ```sh
 # 推荐：由工具启动 pnpm dev，并把 stdout/stderr 推送到网页
 node ~/tools/rn-log-viewer/server.mjs --dev --cwd /Users/yuheng.zhang/work/rn
 ```
+
+也可以在工具目录执行 `npm start -- --dev --cwd /Users/yuheng.zhang/work/rn`。
 
 然后打开 <http://127.0.0.1:4319>。
 
@@ -23,7 +48,9 @@ node ~/tools/rn-log-viewer/server.mjs --dev --cwd /Users/yuheng.zhang/work/rn
 
 - `Dashboard`：实时控制台、最新日志/级别统计/来源统计表格，以及 RN 启动、停止、重启控制；RN ANSI 颜色会在网页中还原。
 - `Log`：紧凑日志列表、Log/Warn/Error 多选 filter、搜索高亮、底部操作栏和 JSON 导出。
-- 日志正文最多展示 250 个字符并以省略号截断；点击日志行可从右侧 Drawer 查看完整内容、格式化 JSON、点击网页链接或通过 VS Code 打开本地文件路径并复制当前内容。
+- 日志正文最多展示 250 个字符并以省略号截断；点击日志行可从右侧 Drawer 查看完整内容、格式化 JSON、点击网页链接或复制本地文件路径。
+- Drawer 中本地文件链接普通点击会复制路径，按住 macOS `⌘` 再点击才会通过 VS Code 打开文件；网页链接仍然直接打开。
+- 本地文件链接通过 `code --reuse-window --goto` 打开，复用已有 VS Code 窗口；工具不再使用 macOS `open -a` fallback，避免每次点击在程序坞产生新的 VS Code 实例。
 
 RN 控制卡使用当前服务的 `--cwd` 作为工作目录。例如：
 
@@ -42,6 +69,8 @@ node ~/tools/rn-log-viewer/server.mjs --file ~/rn.output
 ```
 
 网页提供搜索、级别筛选、暂停自动滚动、清空和 JSON 导出。服务默认只监听 `127.0.0.1`。按 `Ctrl+C` 时，会先结束 `--dev` 启动的 RN 进程，等待其退出后再关闭文件监听和网页服务；RN 超过 5 秒未退出时会强制结束。
+
+文件跳转依赖 VS Code `code` CLI 已加入 PATH；当前实现只调用 CLI 的 `--reuse-window --goto`，如果 CLI 不可用会在网页日志中报错，不会改用 `open -a` 启动新的 App 实例。
 
 ## 接收自定义日志
 
