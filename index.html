@@ -259,10 +259,12 @@
 
       .log-view { min-height: 0; }
       .log-list { min-height: 0; flex: 1; overflow: auto; overflow-x: hidden; padding: 12px; }
-      .entry-list { display: grid; gap: 7px; }
+      .entry-list { display: block; min-height: 100%; }
+      .virtual-spacer { width: 1px; opacity: 0; pointer-events: none; }
       .entry {
         min-width: 0;
         max-width: 100%;
+        margin-bottom: 7px;
         border: 1px solid var(--line);
         border-left: 3px solid var(--green);
         border-radius: 7px;
@@ -477,6 +479,10 @@
         replayTotal: 0,
         replayCurrent: 0,
         renderScheduled: false,
+        virtualEntries: [],
+        virtualHeights: new Map(),
+        virtualTotalHeight: 0,
+        virtualRenderScheduled: false,
       }
 
       const $ = selector => document.querySelector(selector)
@@ -484,6 +490,7 @@
       const emptyNode = $('#empty')
       const searchNode = $('#search')
       const levelFilters = [...document.querySelectorAll('[data-level-filter]')]
+      const logList = entryList.parentElement
 
       function formatTime(value) {
         return new Date(value).toLocaleTimeString()
@@ -765,6 +772,112 @@
         return article
       }
 
+      function getVirtualKey(entry) {
+        const keyword = getKeyword().toLowerCase()
+        const expanded = shouldExpandEntry(entry, keyword)
+        return [entry.id, keyword, expanded, entry.message.length].join('|')
+      }
+
+      function estimateEntryHeight(entry) {
+        const preview = truncateAnsiText(entry.message, 250)
+        const lineCount = Math.max(1, Math.ceil(stripAnsi(preview).length / 120))
+        return 38 + lineCount * 18 + 7
+      }
+
+      function getVirtualHeight(entry) {
+        const key = getVirtualKey(entry)
+        if (!state.virtualHeights.has(key)) {
+          state.virtualHeights.set(key, estimateEntryHeight(entry))
+        }
+        return state.virtualHeights.get(key)
+      }
+
+      function getVirtualMetrics(items) {
+        const offsets = [0]
+        for (const entry of items) {
+          offsets.push(offsets[offsets.length - 1] + getVirtualHeight(entry))
+        }
+        return { offsets, total: offsets[offsets.length - 1] }
+      }
+
+      function findVirtualIndex(offsets, position) {
+        let low = 0
+        let high = offsets.length - 1
+        while (low < high) {
+          const middle = Math.floor((low + high) / 2)
+          if (offsets[middle] < position) low = middle + 1
+          else high = middle
+        }
+        return Math.max(0, low - 1)
+      }
+
+      function createVirtualSpacer(height) {
+        const spacer = document.createElement('div')
+        spacer.className = 'virtual-spacer'
+        spacer.style.height = `${Math.max(0, height)}px`
+        return spacer
+      }
+
+      function scheduleVirtualRender() {
+        if (state.virtualRenderScheduled) return
+        state.virtualRenderScheduled = true
+        requestAnimationFrame(() => {
+          state.virtualRenderScheduled = false
+          renderVirtualWindow()
+        })
+      }
+
+      function renderVirtualWindow() {
+        const items = state.virtualEntries
+        if (!items.length) {
+          state.virtualTotalHeight = 0
+          entryList.replaceChildren()
+          return
+        }
+
+        const metrics = getVirtualMetrics(items)
+        const viewportHeight = logList.clientHeight || 600
+        const scrollTop = logList.scrollTop
+        const overscan = 600
+        const start = Math.max(
+          0,
+          findVirtualIndex(metrics.offsets, Math.max(0, scrollTop - overscan)) - 1
+        )
+        const end = Math.min(
+          items.length,
+          findVirtualIndex(
+            metrics.offsets,
+            scrollTop + viewportHeight + overscan
+          ) + 2
+        )
+        const topSpacer = createVirtualSpacer(metrics.offsets[start])
+        const bottomSpacer = createVirtualSpacer(
+          metrics.total - metrics.offsets[end]
+        )
+        const nodes = [topSpacer]
+        for (let index = start; index < end; index += 1) {
+          const article = createLogEntry(items[index])
+          article.dataset.virtualIndex = String(index)
+          nodes.push(article)
+        }
+        nodes.push(bottomSpacer)
+        entryList.replaceChildren(...nodes)
+        state.virtualTotalHeight = metrics.total
+
+        let heightChanged = false
+        entryList.querySelectorAll('[data-virtual-index]').forEach(node => {
+          const index = Number(node.dataset.virtualIndex)
+          const entry = items[index]
+          const key = getVirtualKey(entry)
+          const height = node.getBoundingClientRect().height + 7
+          if (Math.abs((state.virtualHeights.get(key) || 0) - height) > 1) {
+            state.virtualHeights.set(key, height)
+            heightChanged = true
+          }
+        })
+        if (heightChanged) scheduleVirtualRender()
+      }
+
       function updateFilterControls() {
         const counts = { log: 0, warn: 0, error: 0 }
         for (const entry of state.entries) counts[entry.level] = (counts[entry.level] || 0) + 1
@@ -782,7 +895,8 @@
       function renderLog() {
         updateFilterControls()
         const visible = getVisibleEntries()
-        entryList.replaceChildren(...visible.map(createLogEntry))
+        state.virtualEntries = visible
+        renderVirtualWindow()
         emptyNode.hidden = visible.length > 0
         emptyNode.textContent = state.entries.length === 0
           ? '等待 RN 日志……'
@@ -790,7 +904,7 @@
         $('#clear').disabled = state.entries.length === 0
         $('#export').disabled = visible.length === 0
         if (state.autoScroll && state.activeView === 'log') {
-          entryList.parentElement.scrollTop = entryList.parentElement.scrollHeight
+          logList.scrollTop = logList.scrollHeight
         }
       }
 
@@ -820,6 +934,7 @@
           [entry.source, entry.level, entry.message].join('\u0000')
         )
         entry.message = update.message
+        state.virtualHeights.clear()
         state.entrySignatures.add(
           [entry.source, entry.level, entry.message].join('\u0000')
         )
@@ -1102,7 +1217,10 @@
       $('#startRn').addEventListener('click', () => controlRn('start'))
       $('#stopRn').addEventListener('click', () => controlRn('stop'))
       $('#restartRn').addEventListener('click', () => controlRn('restart'))
-      searchNode.addEventListener('input', renderLog)
+      searchNode.addEventListener('input', () => {
+        state.virtualHeights.clear()
+        renderLog()
+      })
       levelFilters.forEach(button => {
         button.addEventListener('click', () => {
           const level = button.dataset.levelFilter
@@ -1111,6 +1229,7 @@
           if (level === 'all') state.selectedLevels.clear()
           else if (state.selectedLevels.has(level)) state.selectedLevels.delete(level)
           else state.selectedLevels.add(level)
+          state.virtualHeights.clear()
           setActiveView('log')
           const logList = entryList.parentElement
           logList.scrollTop = logList.scrollHeight
@@ -1125,6 +1244,8 @@
         state.entries.length = 0
         state.entryIds.clear()
         state.entrySignatures.clear()
+        state.virtualEntries = []
+        state.virtualHeights.clear()
         renderLog()
         renderDashboard()
       })
@@ -1143,6 +1264,11 @@
       $('#copyLog').addEventListener('click', copyDrawerLog)
       document.addEventListener('keydown', event => {
         if (event.key === 'Escape') closeDrawer()
+      })
+      logList.addEventListener('scroll', scheduleVirtualRender, { passive: true })
+      window.addEventListener('resize', () => {
+        state.virtualHeights.clear()
+        scheduleVirtualRender()
       })
 
       fetch('/api/status').then(response => response.json()).then(status => {
