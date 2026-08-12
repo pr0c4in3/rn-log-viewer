@@ -158,6 +158,8 @@
         font-size: 11px;
       }
       .connection-progress[hidden] { display: none; }
+      .view-header-actions { display: flex; align-items: center; gap: 12px; }
+      .settings-button { padding: 6px 10px; color: var(--blue); }
       .progress-track {
         width: 84px;
         height: 5px;
@@ -274,6 +276,35 @@
       .entry:hover { border-color: var(--blue); background: var(--panel-strong); }
       .entry.warn { border-left-color: var(--yellow); }
       .entry.error { border-left-color: var(--red); }
+      .entry.compact-entry {
+        position: relative;
+        margin-bottom: 1px;
+        border: 0;
+        border-left: 2px solid var(--bg);
+        border-radius: 0;
+        background: var(--panel);
+      }
+      .entry.compact-entry:hover {
+        border-color: var(--bg);
+        background: var(--panel-strong);
+      }
+      .entry.compact-entry.log { border-left-color: var(--green); }
+      .entry.compact-entry.warn { border-left-color: var(--yellow); }
+      .entry.compact-entry.error { border-left-color: var(--red); }
+      .entry.compact-entry .entry-head {
+        position: absolute;
+        top: 0;
+        right: 0;
+        z-index: 1;
+        justify-content: flex-end;
+        padding: 6px 9px 0;
+        pointer-events: none;
+      }
+      .entry.compact-entry .entry-time { margin-left: 0; }
+      .entry.compact-entry .entry-message {
+        min-height: 18px;
+        padding: 7px 90px 7px 9px;
+      }
       .entry-head { display: flex; align-items: center; gap: 9px; padding: 7px 9px 2px; color: var(--muted); font-size: 11px; }
       .entry-level { min-width: 39px; font-weight: 700; text-transform: uppercase; }
       .entry-level.log { color: var(--green); }
@@ -335,6 +366,27 @@
       .drawer-close { width: 30px; height: 30px; color: var(--muted); }
       .drawer-content { min-height: 0; flex: 1; overflow: auto; padding: 17px; }
       .drawer-content pre { max-width: 100%; margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; word-break: break-word; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .settings-modal[hidden] { display: none; }
+      .settings-modal {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        z-index: 7;
+        width: min(420px, calc(100vw - 32px));
+        transform: translate(-50%, -50%);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+      }
+      .settings-header { display: flex; align-items: center; justify-content: space-between; padding: 15px 17px; border-bottom: 1px solid var(--line); }
+      .settings-close { width: 30px; height: 30px; color: var(--muted); }
+      .settings-body { padding: 17px; }
+      .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-strong); }
+      .settings-label { display: grid; gap: 3px; }
+      .settings-label strong { font-size: 13px; }
+      .settings-label span { color: var(--muted); font-size: 12px; }
+      .settings-checkbox { width: 18px; height: 18px; accent-color: var(--blue); }
 
       @media (max-width: 820px) {
         .sidebar { flex-basis: 66px; }
@@ -375,7 +427,8 @@
               <h1>Dashboard</h1>
               <span class="muted">RN 开发运行面板</span>
             </div>
-            <div>
+            <div class="view-header-actions">
+              <button id="settingsButton" class="settings-button" type="button">设置</button>
               <span id="connection" class="connection">连接中</span>
               <span id="connectionProgress" class="connection-progress" hidden>
                 <span class="progress-track"><span id="progressBar" class="progress-bar"></span></span>
@@ -459,6 +512,22 @@
       </div>
       <div class="drawer-content"><pre id="drawerMessage"></pre></div>
     </aside>
+    <div id="settingsBackdrop" class="drawer-backdrop" hidden></div>
+    <section id="settingsModal" class="settings-modal" hidden aria-label="设置">
+      <div class="settings-header">
+        <h2>设置</h2>
+        <button id="settingsClose" class="settings-close" type="button">×</button>
+      </div>
+      <div class="settings-body">
+        <label class="settings-row" for="compactModeSetting">
+          <span class="settings-label">
+            <strong>精简模式</strong>
+            <span>隐藏 log 和 rn-stdout，使用高密度分割线列表</span>
+          </span>
+          <input id="compactModeSetting" class="settings-checkbox" type="checkbox" checked />
+        </label>
+      </div>
+    </section>
 
     <script>
       const state = {
@@ -477,6 +546,7 @@
         replayTotal: 0,
         replayCurrent: 0,
         renderScheduled: false,
+        compactMode: true,
         virtualEntries: [],
         virtualHeights: new Map(),
         virtualTotalHeight: 0,
@@ -741,7 +811,7 @@
 
       function createLogEntry(entry) {
         const article = document.createElement('article')
-        article.className = `entry ${entry.level}`
+        article.className = `entry ${entry.level}${state.compactMode ? ' compact-entry' : ''}`
         article.addEventListener('click', () => openDrawer(entry))
 
         const head = document.createElement('div')
@@ -749,8 +819,10 @@
         const level = document.createElement('span')
         level.className = `entry-level ${entry.level}`
         level.textContent = entry.level
+        level.hidden = state.compactMode && entry.level === 'log'
         const source = document.createElement('span')
         source.className = 'entry-source'
+        source.hidden = state.compactMode && entry.source === 'rn-stdout'
         setHighlightedText(source, entry.source, getKeyword())
         const time = document.createElement('time')
         time.className = 'entry-time'
@@ -773,7 +845,7 @@
       function getVirtualKey(entry) {
         const keyword = getKeyword().toLowerCase()
         const expanded = shouldExpandEntry(entry, keyword)
-        return [entry.id, keyword, expanded, entry.message.length].join('|')
+        return [entry.id, keyword, expanded, state.compactMode, entry.message.length].join('|')
       }
 
       function estimateEntryHeight(entry) {
@@ -1193,6 +1265,23 @@
         if (viewName === 'dashboard') renderDashboard()
       }
 
+      function setCompactMode(enabled) {
+        state.compactMode = enabled
+        $('#compactModeSetting').checked = enabled
+        state.virtualHeights.clear()
+        renderLog()
+      }
+
+      function openSettings() {
+        $('#settingsBackdrop').hidden = false
+        $('#settingsModal').hidden = false
+      }
+
+      function closeSettings() {
+        $('#settingsBackdrop').hidden = true
+        $('#settingsModal').hidden = true
+      }
+
       async function copyDrawerLog() {
         if (!state.drawerEntry) return
         const copyButton = $('#copyLog')
@@ -1213,6 +1302,12 @@
       })
       $('#startRn').addEventListener('click', () => controlRn('start'))
       $('#stopRn').addEventListener('click', () => controlRn('stop'))
+      $('#settingsButton').addEventListener('click', openSettings)
+      $('#settingsClose').addEventListener('click', closeSettings)
+      $('#settingsBackdrop').addEventListener('click', closeSettings)
+      $('#compactModeSetting').addEventListener('change', event => {
+        setCompactMode(event.currentTarget.checked)
+      })
       searchNode.addEventListener('input', () => {
         state.virtualHeights.clear()
         renderLog()
@@ -1259,7 +1354,9 @@
       $('#formatLog').addEventListener('click', toggleDrawerFormat)
       $('#copyLog').addEventListener('click', copyDrawerLog)
       document.addEventListener('keydown', event => {
-        if (event.key === 'Escape') closeDrawer()
+        if (event.key !== 'Escape') return
+        closeDrawer()
+        closeSettings()
       })
       logList.addEventListener('scroll', scheduleVirtualRender, { passive: true })
       window.addEventListener('resize', () => {
