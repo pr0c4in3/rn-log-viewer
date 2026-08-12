@@ -27,6 +27,7 @@ let childProcess
 let fileOffset = 0
 let fileWatcher
 let isShuttingDown = false
+const streamStates = new Map()
 
 function readOption(name, fallback) {
   const index = args.indexOf(name)
@@ -82,10 +83,130 @@ function sendSseEvent(client, eventName, data) {
   client.write(`${prefix}data: ${JSON.stringify(data)}\n\n`)
 }
 
+function stripAnsi(value) {
+  return value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+}
+
+function getLogHeader(line) {
+  const normalized = stripAnsi(line).trim()
+  const levelMatch = normalized.match(
+    /^(log|info|warn|warning|error|debug|trace|fatal)\b/i
+  )
+  if (levelMatch) {
+    return { type: 'level', key: levelMatch[1].toLowerCase() }
+  }
+
+  const timeMatch = normalized.match(
+    /^\[(\d{4}-\d{2}-\d{2}[^\]]+)\]/
+  )
+  if (timeMatch) return { type: 'timestamp', key: timeMatch[1] }
+  if (/^bundle\b/i.test(normalized)) return { type: 'bundle', key: 'bundle' }
+  if (/^transform\[stderr\]:/i.test(normalized)) {
+    return { type: 'prefix', key: 'transform[stderr]' }
+  }
+  return null
+}
+
+function isStackLine(line) {
+  return /^\s*(at\b|caused by\b|from\b)/i.test(stripAnsi(line))
+}
+
+function isStructuredContinuation(line) {
+  const normalized = stripAnsi(line)
+  const trimmed = normalized.trim()
+  if (/^\s+/.test(line)) return true
+  return /^(?:[{}[\],]|["'])/.test(trimmed)
+}
+
+function isBlockContinuation(line, header) {
+  if (!header) return false
+  const normalized = stripAnsi(line).trim()
+  if (header.type === 'bundle' || header.type === 'timestamp') {
+    return /^(?:from|target-url|cache-path):/i.test(normalized)
+  }
+  return false
+}
+
+function getStreamState(source) {
+  if (!streamStates.has(source)) {
+    streamStates.set(source, {
+      buffer: '',
+      pending: '',
+      pendingHeader: null,
+      flushTimer: null,
+      partialTimer: null,
+    })
+  }
+  return streamStates.get(source)
+}
+
+function flushPendingLine(state, source) {
+  if (!state.pending) return
+  publish(state.pending, { source })
+  state.pending = ''
+  state.pendingHeader = null
+}
+
+function schedulePendingFlush(state, source) {
+  clearTimeout(state.flushTimer)
+  state.flushTimer = setTimeout(() => {
+    flushPendingLine(state, source)
+  }, 80)
+}
+
+function processCompleteLine(line, source, state) {
+  if (!line) return
+  const header = getLogHeader(line)
+  const sameHeader = header && state.pendingHeader && (
+    header.type === 'prefix' &&
+    header.type === state.pendingHeader.type &&
+    header.key === state.pendingHeader.key ||
+    header.type === 'timestamp' &&
+    header.type === state.pendingHeader.type &&
+    header.key === state.pendingHeader.key
+  )
+  const isContinuation = isStackLine(line) || sameHeader || (
+    state.pendingHeader && isStructuredContinuation(line)
+  ) || isBlockContinuation(line, state.pendingHeader)
+  if (isContinuation && state.pending) {
+    state.pending += `\n${line}`
+    schedulePendingFlush(state, source)
+    return
+  }
+  flushPendingLine(state, source)
+  state.pending = line
+  state.pendingHeader = header
+  schedulePendingFlush(state, source)
+}
+
+function schedulePartialFlush(state, source) {
+  clearTimeout(state.partialTimer)
+  state.partialTimer = setTimeout(() => {
+    if (!state.buffer) return
+    const line = state.buffer
+    state.buffer = ''
+    processCompleteLine(line, source, state)
+  }, 80)
+}
+
 function publishChunk(chunk, source) {
-  const text = chunk.toString().replace(/\r\n/g, '\n')
-  for (const message of text.split('\n')) {
-    publish(message, { source })
+  const state = getStreamState(source)
+  state.buffer += chunk.toString().replace(/\r\n/g, '\n')
+  const lines = state.buffer.split('\n')
+  state.buffer = lines.pop() || ''
+  for (const line of lines) processCompleteLine(line, source, state)
+  if (state.buffer) schedulePartialFlush(state, source)
+}
+
+function flushLogBuffers() {
+  for (const [source, state] of streamStates) {
+    clearTimeout(state.flushTimer)
+    clearTimeout(state.partialTimer)
+    if (state.buffer) {
+      processCompleteLine(state.buffer, source, state)
+      state.buffer = ''
+    }
+    flushPendingLine(state, source)
   }
 }
 
@@ -179,6 +300,7 @@ function startDevProcess() {
     forwardDevOutput(chunk, process.stderr, 'stderr')
   })
   childProcess.on('close', code => {
+    flushLogBuffers()
     console.log(`[RN Log Viewer] pnpm dev 已退出，退出码: ${code ?? 'unknown'}`)
     publish(`pnpm dev 已退出，退出码: ${code ?? 'unknown'}`, {
       source: 'launcher',
@@ -420,6 +542,7 @@ async function shutdown() {
   unwatchFile(pagePath)
 
   await waitForProcessExit(childProcess, 'pnpm dev')
+  flushLogBuffers()
   console.log('[RN Log Viewer] RN 进程已关闭，正在关闭日志监控')
   if (fileWatcher) clearInterval(fileWatcher)
   for (const client of clients.keys()) client.end()

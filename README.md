@@ -48,6 +48,7 @@ node ~/tools/rn-log-viewer/server.mjs --dev --cwd /Users/yuheng.zhang/work/rn
 
 - `Dashboard`：实时控制台、最新日志/级别统计/来源统计表格，以及 RN 启动、停止、重启控制；RN ANSI 颜色会在网页中还原。
 - `Log`：紧凑日志列表、Log/Warn/Error 多选 filter、搜索高亮、底部操作栏和 JSON 导出。
+- `LOG`、`INFO`、`WARN`、`ERROR`、`DEBUG`、`TRACE`、`FATAL`、`BUNDLE`、时间戳日志头和 `transform[stderr]` 会识别为日志边界；其后的缩进内容、对象/数组续行、`at`、`Caused by`、`from`、`TARGET-URL`、`CACHE-PATH` 等会合并到上一条日志中，避免一条信息被拆成多条列表记录，详情中仍保留原始换行。
 - 日志正文最多展示 250 个字符并以省略号截断；点击日志行可从右侧 Drawer 查看完整内容、格式化 JSON、点击网页链接或复制本地文件路径。
 - Drawer 中本地文件链接普通点击会复制路径，按住 macOS `⌘` 再点击才会通过 VS Code 打开文件；网页链接仍然直接打开。
 - 本地文件链接通过 `code --reuse-window --goto` 打开，复用已有 VS Code 窗口；工具不再使用 macOS `open -a` fallback，避免每次点击在程序坞产生新的 VS Code 实例。
