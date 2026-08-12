@@ -484,7 +484,7 @@
             <button class="filter-button" type="button" data-level-filter="warn">Warn <span>0</span></button>
             <button class="filter-button" type="button" data-level-filter="error">Error <span>0</span></button>
             <span class="toolbar-spacer"></span>
-            <button id="pause" class="toolbar-button" type="button">暂停滚动</button>
+            <button id="pause" class="toolbar-button" type="button">暂停刷新</button>
             <button id="clear" class="toolbar-button" type="button">清空</button>
             <button id="export" class="toolbar-button" type="button">导出 JSON</button>
           </div>
@@ -537,6 +537,7 @@
         selectedLevels: new Set(),
         tableMode: 'recent',
         autoScroll: true,
+        refreshPaused: false,
         activeView: 'dashboard',
         devRunning: false,
         controlBusy: false,
@@ -552,6 +553,7 @@
         virtualTotalHeight: 0,
         virtualRenderScheduled: false,
         deferredEntryIds: new Set(),
+        pendingUpdates: new Map(),
         renderScrollToBottom: undefined,
       }
 
@@ -1021,7 +1023,6 @@
       }
 
       function addEntry(entry) {
-        const deferEntry = state.activeView === 'log' && !isLogAtBottom()
         const signature = [entry.source, entry.level, entry.message].join('\u0000')
         if (
           (entry.id && state.entryIds.has(entry.id)) ||
@@ -1030,11 +1031,15 @@
         if (entry.id) state.entryIds.add(entry.id)
         state.entrySignatures.add(signature)
         state.entries.push(entry)
-        if (deferEntry) state.deferredEntryIds.add(entry.id)
+        if (state.refreshPaused) state.deferredEntryIds.add(entry.id)
         else state.deferredEntryIds.clear()
         if (state.entries.length > 2000) {
           const removed = state.entries.shift()
-          if (removed.id) state.entryIds.delete(removed.id)
+          if (removed.id) {
+            state.entryIds.delete(removed.id)
+            state.deferredEntryIds.delete(removed.id)
+            state.pendingUpdates.delete(removed.id)
+          }
           state.entrySignatures.delete(
             [removed.source, removed.level, removed.message].join('\u0000')
           )
@@ -1043,6 +1048,14 @@
       }
 
       function updateEntry(update) {
+        if (state.refreshPaused) {
+          state.pendingUpdates.set(update.id, update)
+          return
+        }
+        applyEntryUpdate(update)
+      }
+
+      function applyEntryUpdate(update) {
         const entry = state.entries.find(item => item.id === update.id)
         if (!entry) return
         state.entrySignatures.delete(
@@ -1060,6 +1073,7 @@
       }
 
       function scheduleRender() {
+        if (state.refreshPaused) return
         if (state.renderScrollToBottom === undefined) {
           state.renderScrollToBottom = state.autoScroll &&
             state.activeView === 'log' && isLogAtBottom()
@@ -1068,6 +1082,10 @@
         state.renderScheduled = true
         requestAnimationFrame(() => {
           state.renderScheduled = false
+          if (state.refreshPaused) {
+            state.renderScrollToBottom = undefined
+            return
+          }
           const scrollToBottom = state.renderScrollToBottom
           state.renderScrollToBottom = undefined
           renderLog(scrollToBottom)
@@ -1075,13 +1093,18 @@
         })
       }
 
-      function releaseDeferredEntries() {
-        if (!state.deferredEntryIds.size || !isLogAtBottom()) return
+      function resumeRefresh() {
+        const shouldScrollToBottom = state.activeView === 'log' &&
+          state.autoScroll && isLogAtBottom()
+        state.refreshPaused = false
+        for (const update of state.pendingUpdates.values()) {
+          applyEntryUpdate(update)
+        }
+        state.pendingUpdates.clear()
         state.deferredEntryIds.clear()
         state.virtualHeights.clear()
-        renderLog(false)
-        logList.scrollTop = logList.scrollHeight
-        scheduleVirtualRender()
+        renderLog(shouldScrollToBottom)
+        renderDashboard()
       }
 
       function updateReplayProgress(current, total) {
@@ -1383,13 +1406,18 @@
           state.virtualHeights.clear()
           setActiveView('log')
           logList.scrollTop = logList.scrollHeight
-          releaseDeferredEntries()
         })
       })
       $('#pause').addEventListener('click', event => {
-        state.autoScroll = !state.autoScroll
-        event.currentTarget.textContent = state.autoScroll ? '暂停滚动' : '恢复滚动'
-        event.currentTarget.classList.toggle('active', !state.autoScroll)
+        if (state.refreshPaused) {
+          resumeRefresh()
+          event.currentTarget.textContent = '暂停刷新'
+          event.currentTarget.classList.remove('active')
+          return
+        }
+        state.refreshPaused = true
+        event.currentTarget.textContent = '恢复刷新'
+        event.currentTarget.classList.add('active')
       })
       $('#clear').addEventListener('click', () => {
         state.entries.length = 0
@@ -1398,6 +1426,7 @@
         state.virtualEntries = []
         state.virtualHeights.clear()
         state.deferredEntryIds.clear()
+        state.pendingUpdates.clear()
         renderLog()
         renderDashboard()
       })
@@ -1421,7 +1450,6 @@
       })
       logList.addEventListener('scroll', () => {
         scheduleVirtualRender()
-        releaseDeferredEntries()
       }, { passive: true })
       window.addEventListener('resize', () => {
         state.virtualHeights.clear()
