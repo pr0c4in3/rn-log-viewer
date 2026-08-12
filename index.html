@@ -813,6 +813,22 @@
         scheduleRender()
       }
 
+      function updateEntry(update) {
+        const entry = state.entries.find(item => item.id === update.id)
+        if (!entry) return
+        state.entrySignatures.delete(
+          [entry.source, entry.level, entry.message].join('\u0000')
+        )
+        entry.message = update.message
+        state.entrySignatures.add(
+          [entry.source, entry.level, entry.message].join('\u0000')
+        )
+        if (state.drawerEntry && state.drawerEntry.id === update.id) {
+          renderDrawerMessage()
+        }
+        scheduleRender()
+      }
+
       function scheduleRender() {
         if (state.renderScheduled) return
         state.renderScheduled = true
@@ -1096,7 +1112,8 @@
           else if (state.selectedLevels.has(level)) state.selectedLevels.delete(level)
           else state.selectedLevels.add(level)
           setActiveView('log')
-          $('#entryList').scrollIntoView({ block: 'start' })
+          const logList = entryList.parentElement
+          logList.scrollTop = logList.scrollHeight
         })
       })
       $('#pause').addEventListener('click', event => {
@@ -1142,6 +1159,9 @@
         }
       }
       eventSource.onmessage = event => addEntry(JSON.parse(event.data))
+      eventSource.addEventListener('update', event => {
+        updateEntry(JSON.parse(event.data))
+      })
       eventSource.addEventListener('replay-start', event => {
         startReplay(JSON.parse(event.data).total)
       })

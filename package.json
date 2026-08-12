@@ -1,6 +1,6 @@
 {
   "name": "rn-log-viewer",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Local web viewer for React Native development logs",
   "type": "module",
   "bin": {

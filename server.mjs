@@ -44,11 +44,7 @@ function sendJson(response, statusCode, body) {
 
 function classify(message, requestedLevel) {
   if (requestedLevel) return requestedLevel
-  if (/\b(error|fatal|exception|failed|失败|错误)\b/i.test(message)) {
-    return 'error'
-  }
-  if (/\b(warn|warning|deprecated|警告)\b/i.test(message)) return 'warn'
-  return 'log'
+  return getLeadingLevel(message) || 'log'
 }
 
 function publish(message, metadata = {}) {
@@ -66,6 +62,15 @@ function publish(message, metadata = {}) {
   if (history.length > maxHistory) history.shift()
 
   broadcastEvent('message', entry)
+  return entry
+}
+
+function appendToEntry(entry, message) {
+  entry.message += `\n${message}`
+  broadcastEvent('update', {
+    id: entry.id,
+    message: entry.message,
+  })
 }
 
 function broadcastEvent(eventName, data) {
@@ -87,96 +92,36 @@ function stripAnsi(value) {
   return value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
 }
 
-function getLogHeader(line) {
-  const normalized = stripAnsi(line).trim()
-  const levelMatch = normalized.match(
-    /^(log|info|warn|warning|error|debug|trace|fatal)\b/i
-  )
-  if (levelMatch) {
-    return { type: 'level', key: levelMatch[1].toLowerCase() }
-  }
-
-  const timeMatch = normalized.match(
-    /^\[(\d{4}-\d{2}-\d{2}[^\]]+)\]/
-  )
-  if (timeMatch) return { type: 'timestamp', key: timeMatch[1] }
-  if (/^bundle\b/i.test(normalized)) return { type: 'bundle', key: 'bundle' }
-  if (/^transform\[stderr\]:/i.test(normalized)) {
-    return { type: 'prefix', key: 'transform[stderr]' }
-  }
-  return null
-}
-
-function isStackLine(line) {
-  return /^\s*(at\b|caused by\b|from\b)/i.test(stripAnsi(line))
-}
-
-function isStructuredContinuation(line) {
-  const normalized = stripAnsi(line)
-  const trimmed = normalized.trim()
-  if (/^\s+/.test(line)) return true
-  return /^(?:[{}[\],]|["'])/.test(trimmed)
-}
-
-function isBlockContinuation(line, header) {
-  if (!header) return false
-  const normalized = stripAnsi(line).trim()
-  if (header.type === 'bundle' || header.type === 'timestamp') {
-    return /^(?:from|target-url|cache-path):/i.test(normalized)
-  }
-  return false
+function getLeadingLevel(line) {
+  const match = stripAnsi(line).trim().match(/^(log|warn|error)\b/i)
+  return match ? match[1].toLowerCase() : null
 }
 
 function getStreamState(source) {
   if (!streamStates.has(source)) {
     streamStates.set(source, {
       buffer: '',
-      pending: '',
-      pendingHeader: null,
-      flushTimer: null,
       partialTimer: null,
+      seenHeader: false,
+      lastEntry: null,
     })
   }
   return streamStates.get(source)
 }
 
-function flushPendingLine(state, source) {
-  if (!state.pending) return
-  publish(state.pending, { source })
-  state.pending = ''
-  state.pendingHeader = null
-}
-
-function schedulePendingFlush(state, source) {
-  clearTimeout(state.flushTimer)
-  state.flushTimer = setTimeout(() => {
-    flushPendingLine(state, source)
-  }, 80)
-}
-
 function processCompleteLine(line, source, state) {
   if (!line) return
-  const header = getLogHeader(line)
-  const sameHeader = header && state.pendingHeader && (
-    header.type === 'prefix' &&
-    header.type === state.pendingHeader.type &&
-    header.key === state.pendingHeader.key ||
-    header.type === 'timestamp' &&
-    header.type === state.pendingHeader.type &&
-    header.key === state.pendingHeader.key
-  )
-  const isContinuation = isStackLine(line) || sameHeader || (
-    state.pendingHeader && isStructuredContinuation(line)
-  ) || isBlockContinuation(line, state.pendingHeader)
-  if (isContinuation && state.pending) {
-    state.pending += `\n${line}`
-    schedulePendingFlush(state, source)
+  const level = getLeadingLevel(line)
+  if (level) {
+    state.seenHeader = true
+    state.lastEntry = publish(line, { source, level })
     return
   }
-  flushPendingLine(state, source)
-  state.pending = line
-  state.pendingHeader = header
-  schedulePendingFlush(state, source)
+  if (state.seenHeader && state.lastEntry) {
+    appendToEntry(state.lastEntry, line)
+    return
+  }
+  state.lastEntry = publish(line, { source, level: 'log' })
 }
 
 function schedulePartialFlush(state, source) {
@@ -200,13 +145,11 @@ function publishChunk(chunk, source) {
 
 function flushLogBuffers() {
   for (const [source, state] of streamStates) {
-    clearTimeout(state.flushTimer)
     clearTimeout(state.partialTimer)
     if (state.buffer) {
       processCompleteLine(state.buffer, source, state)
       state.buffer = ''
     }
-    flushPendingLine(state, source)
   }
 }
 
