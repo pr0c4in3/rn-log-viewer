@@ -1463,7 +1463,7 @@
         renderDrawerMessage()
       }
 
-      function setActiveView(viewName) {
+      function setActiveView(viewName, forceLogBottom = false) {
         const wasLogView = state.activeView === 'log'
         state.activeView = viewName
         document.querySelectorAll('[data-view]').forEach(node => {
@@ -1471,7 +1471,9 @@
         })
         $('#dashboardView').classList.toggle('active', viewName === 'dashboard')
         $('#logView').classList.toggle('active', viewName === 'log')
-        if (viewName === 'log') renderLog(!wasLogView)
+        if (viewName === 'log') {
+          renderLog(forceLogBottom || !wasLogView)
+        }
         if (viewName === 'dashboard') renderDashboard()
       }
 
@@ -1559,7 +1561,7 @@
           if (level === 'all') state.selectedLevels.clear()
           else if (state.selectedLevels.has(level)) state.selectedLevels.delete(level)
           else state.selectedLevels.add(level)
-          setActiveView('log')
+          setActiveView('log', true)
         })
       })
       $('#pause').addEventListener('click', event => {
