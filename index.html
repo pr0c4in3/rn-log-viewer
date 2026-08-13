@@ -526,6 +526,13 @@
           </span>
           <input id="compactModeSetting" class="settings-checkbox" type="checkbox" checked />
         </label>
+        <label class="settings-row" for="mergeStartupSetting">
+          <span class="settings-label">
+            <strong>合并启动内容</strong>
+            <span>将首个 Log、Warn 或 Error 之前的内容合并为一条 Log</span>
+          </span>
+          <input id="mergeStartupSetting" class="settings-checkbox" type="checkbox" checked />
+        </label>
       </div>
     </section>
 
@@ -557,6 +564,8 @@
         visibleEntriesCache: new Map(),
         searchTextCache: new WeakMap(),
         renderScrollToBottom: undefined,
+        mergeStartup: true,
+        displayEntriesCache: new Map(),
       }
 
       const $ = selector => document.querySelector(selector)
@@ -814,13 +823,47 @@
         return text
       }
 
-      function getVisibleEntries() {
+      function getDisplayEntries(includeDeferred = true) {
+        const cacheKey = includeDeferred ? 'all' : 'render'
+        const cached = state.displayEntriesCache.get(cacheKey)
+        if (cached) return cached
+        const sourceEntries = includeDeferred
+          ? state.entries
+          : state.entries.filter(entry => !state.deferredEntryIds.has(entry.id))
+        if (!state.mergeStartup) {
+          state.displayEntriesCache.set(cacheKey, sourceEntries)
+          return sourceEntries
+        }
+
+        const displayEntries = []
+        let startupGroup
+        for (const entry of sourceEntries) {
+          if (!entry.startup) {
+            displayEntries.push(entry)
+            continue
+          }
+          if (!startupGroup) {
+            startupGroup = {
+              ...entry,
+              id: `startup-${entry.id}`,
+              level: 'log',
+            }
+            displayEntries.push(startupGroup)
+          } else {
+            startupGroup.message += `\n${entry.message}`
+          }
+        }
+        state.displayEntriesCache.set(cacheKey, displayEntries)
+        return displayEntries
+      }
+
+      function getVisibleEntries(includeDeferred = true) {
         const keyword = getKeyword().toLowerCase()
         const levels = [...state.selectedLevels].sort().join(',')
-        const cacheKey = `${levels}|${keyword}`
+        const cacheKey = `${includeDeferred ? 'all' : 'render'}|${levels}|${keyword}`
         const cached = state.visibleEntriesCache.get(cacheKey)
         if (cached) return cached
-        const visible = state.entries.filter(entry => {
+        const visible = getDisplayEntries(includeDeferred).filter(entry => {
           const levelMatched = state.selectedLevels.size === 0 || state.selectedLevels.has(entry.level)
           return levelMatched && (!keyword || getEntrySearchText(entry).includes(keyword))
         })
@@ -829,9 +872,7 @@
       }
 
       function getRenderableEntries() {
-        const visible = getVisibleEntries()
-        if (!state.deferredEntryIds.size) return visible
-        return visible.filter(entry => !state.deferredEntryIds.has(entry.id))
+        return getVisibleEntries(state.deferredEntryIds.size === 0)
       }
 
       function createLogEntry(entry) {
@@ -996,10 +1037,11 @@
 
       function updateFilterControls() {
         const counts = { log: 0, warn: 0, error: 0 }
-        for (const entry of state.entries) counts[entry.level] = (counts[entry.level] || 0) + 1
+        const entries = getDisplayEntries()
+        for (const entry of entries) counts[entry.level] = (counts[entry.level] || 0) + 1
         for (const button of levelFilters) {
           const level = button.dataset.levelFilter
-          const count = level === 'all' ? state.entries.length : counts[level] || 0
+          const count = level === 'all' ? entries.length : counts[level] || 0
           button.querySelector('span').textContent = count
           button.disabled = count === 0
           button.classList.toggle('active', level === 'all'
@@ -1037,6 +1079,7 @@
         state.entrySignatures.add(signature)
         state.entries.push(entry)
         cacheEntrySearchText(entry)
+        state.displayEntriesCache.clear()
         state.visibleEntriesCache.clear()
         if (state.refreshPaused) state.deferredEntryIds.add(entry.id)
         else state.deferredEntryIds.clear()
@@ -1070,6 +1113,7 @@
         )
         entry.message = update.message
         cacheEntrySearchText(entry)
+        state.displayEntriesCache.clear()
         state.visibleEntriesCache.clear()
         state.virtualHeights.clear()
         state.entrySignatures.add(
@@ -1111,6 +1155,7 @@
         }
         state.pendingUpdates.clear()
         state.deferredEntryIds.clear()
+        state.displayEntriesCache.clear()
         state.virtualHeights.clear()
         renderLog(shouldScrollToBottom)
         renderDashboard()
@@ -1364,6 +1409,15 @@
         renderLog()
       }
 
+      function setMergeStartup(enabled) {
+        state.mergeStartup = enabled
+        $('#mergeStartupSetting').checked = enabled
+        state.displayEntriesCache.clear()
+        state.visibleEntriesCache.clear()
+        state.virtualHeights.clear()
+        renderLog()
+      }
+
       function openSettings() {
         $('#settingsBackdrop').hidden = false
         $('#settingsModal').hidden = false
@@ -1400,6 +1454,9 @@
       $('#compactModeSetting').addEventListener('change', event => {
         setCompactMode(event.currentTarget.checked)
       })
+      $('#mergeStartupSetting').addEventListener('change', event => {
+        setMergeStartup(event.currentTarget.checked)
+      })
       searchNode.addEventListener('input', () => {
         renderLog()
         if (state.drawerEntry) renderDrawerMessage()
@@ -1430,6 +1487,7 @@
         state.entries.length = 0
         state.entryIds.clear()
         state.entrySignatures.clear()
+        state.displayEntriesCache.clear()
         state.visibleEntriesCache.clear()
         state.searchTextCache = new WeakMap()
         state.virtualEntries = []

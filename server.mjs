@@ -57,6 +57,7 @@ function publish(message, metadata = {}) {
     level: classify(message, metadata.level),
     source: metadata.source || 'dev',
     message,
+    startup: metadata.startup === true,
   }
 
   history.push(entry)
@@ -122,7 +123,7 @@ function processCompleteLine(line, source, state) {
     appendToEntry(state.lastEntry, line)
     return
   }
-  state.lastEntry = publish(line, { source, level: 'log' })
+  state.lastEntry = publish(line, { source, level: 'log', startup: true })
 }
 
 function schedulePartialFlush(state, source) {
