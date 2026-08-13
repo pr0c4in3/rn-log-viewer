@@ -577,6 +577,7 @@
         displayEntriesCache: new Map(),
         virtualScrolling: true,
         programmaticScroll: false,
+        entryQueue: [],
       }
 
       const $ = selector => document.querySelector(selector)
@@ -601,8 +602,12 @@
       function scrollLogToBottom() {
         const top = Math.max(0, logList.scrollHeight - logList.clientHeight)
         if (Math.abs(logList.scrollTop - top) <= 1) return
+        setLogScrollTop(top)
+      }
+
+      function setLogScrollTop(top) {
         state.programmaticScroll = true
-        logList.scrollTop = top
+        logList.scrollTop = Math.max(0, top)
         requestAnimationFrame(() => {
           state.programmaticScroll = false
         })
@@ -1004,7 +1009,15 @@
         state.virtualTotalHeight = 0
       }
 
-      function renderVirtualWindow(forceBottom = false) {
+      function findRenderedEntry(entryId) {
+        if (!entryId) return null
+        for (const node of entryList.querySelectorAll('[data-entry-id]')) {
+          if (node.dataset.entryId === entryId) return node
+        }
+        return null
+      }
+
+      function renderVirtualWindow(forceBottom = false, extraEnd = 0) {
         if (!state.virtualScrolling) return
         const items = state.virtualEntries
         if (!items.length) {
@@ -1018,35 +1031,38 @@
         const scrollTop = logList.scrollTop
         const keepBottom = forceBottom
         const anchorIndex = findVirtualIndex(metrics.offsets, scrollTop)
+        const anchorId = items[anchorIndex] && items[anchorIndex].id
         const anchorOffset = scrollTop - metrics.offsets[anchorIndex]
-        const anchorNode = entryList.querySelector(
-          `[data-virtual-index="${anchorIndex}"]`
-        )
+        const anchorNode = findRenderedEntry(anchorId)
         const containerTop = logList.getBoundingClientRect().top
         const anchorTop = anchorNode
           ? anchorNode.getBoundingClientRect().top - containerTop
           : null
-        const overscan = 800
+        const overscan = 1200
         const start = Math.max(
           0,
           findVirtualIndex(metrics.offsets, Math.max(0, scrollTop - overscan)) - 1
         )
-        const end = Math.min(
+        const baseEnd = Math.min(
           items.length,
           findVirtualIndex(
             metrics.offsets,
             scrollTop + viewportHeight + overscan
           ) + 2
         )
+        const end = Math.min(items.length, baseEnd + extraEnd)
         const topSpacer = createVirtualSpacer(metrics.offsets[start])
         const bottomSpacer = createVirtualSpacer(
           metrics.total - metrics.offsets[end]
         )
         const nodes = [topSpacer]
+        let lastRenderedNode = null
         for (let index = start; index < end; index += 1) {
           const article = createLogEntry(items[index])
           article.dataset.virtualIndex = String(index)
+          article.dataset.entryId = items[index].id
           nodes.push(article)
+          lastRenderedNode = article
         }
         nodes.push(bottomSpacer)
         entryList.replaceChildren(...nodes)
@@ -1074,29 +1090,28 @@
             adjustedMetrics.total - adjustedMetrics.offsets[end]
           )}px`
           state.virtualTotalHeight = adjustedMetrics.total
-          scheduleVirtualRender()
+        }
+        const viewportBottom = logList.getBoundingClientRect().bottom
+        if (
+          lastRenderedNode &&
+          lastRenderedNode.getBoundingClientRect().bottom < viewportBottom - 1 &&
+          end < items.length
+        ) {
+          return renderVirtualWindow(forceBottom, extraEnd + 16)
         }
         if (keepBottom) {
           scrollLogToBottom()
         } else if (anchorTop !== null) {
-          const nextAnchorNode = entryList.querySelector(
-            `[data-virtual-index="${anchorIndex}"]`
-          )
+          const nextAnchorNode = findRenderedEntry(anchorId)
           if (nextAnchorNode) {
             const nextAnchorTop = nextAnchorNode.getBoundingClientRect().top -
               containerTop
-            logList.scrollTop += nextAnchorTop - anchorTop
+            setLogScrollTop(logList.scrollTop + nextAnchorTop - anchorTop)
           } else {
-            logList.scrollTop = Math.max(
-              0,
-              adjustedMetrics.offsets[anchorIndex] + anchorOffset
-            )
+            setLogScrollTop(adjustedMetrics.offsets[anchorIndex] + anchorOffset)
           }
         } else {
-          logList.scrollTop = Math.max(
-            0,
-            adjustedMetrics.offsets[anchorIndex] + anchorOffset
-          )
+          setLogScrollTop(adjustedMetrics.offsets[anchorIndex] + anchorOffset)
         }
       }
 
@@ -1117,6 +1132,7 @@
 
       function renderLog(scrollToBottom) {
         state.renderVersion += 1
+        state.renderScrollToBottom = undefined
         updateFilterControls()
         const visible = getRenderableEntries()
         state.virtualEntries = visible
@@ -1131,43 +1147,70 @@
           : '没有符合当前 filter 的内容'
         $('#clear').disabled = state.entries.length === 0
         $('#export').disabled = visible.length === 0
-        if (shouldScroll) {
+        if (shouldScroll && !state.virtualScrolling) {
           scrollLogToBottom()
         }
       }
 
+      function findQueuedEntry(entryId) {
+        if (!entryId) return null
+        return state.entryQueue.find(entry => entry.id === entryId) || null
+      }
+
+      function getEntrySignature(entry) {
+        return [entry.source, entry.level, entry.message].join('\u0000')
+      }
+
+      function commitQueuedEntries() {
+        if (state.refreshPaused || state.entryQueue.length === 0) return false
+        const batch = state.entryQueue.splice(0, 2)
+        for (const queuedEntry of batch) {
+          const pendingUpdate = state.pendingUpdates.get(queuedEntry.id)
+          state.entrySignatures.delete(getEntrySignature(queuedEntry))
+          if (pendingUpdate) {
+            queuedEntry.message = pendingUpdate.message
+            cacheEntrySearchText(queuedEntry)
+            state.pendingUpdates.delete(queuedEntry.id)
+          }
+          state.entries.push(queuedEntry)
+          state.entrySignatures.add(getEntrySignature(queuedEntry))
+          if (state.entries.length > 2000) {
+            const removed = state.entries.shift()
+            if (removed.id) {
+              state.entryIds.delete(removed.id)
+              state.deferredEntryIds.delete(removed.id)
+              state.pendingUpdates.delete(removed.id)
+            }
+            state.entrySignatures.delete(getEntrySignature(removed))
+          }
+        }
+        state.displayEntriesCache.clear()
+        state.visibleEntriesCache.clear()
+        state.virtualMetricsCache.clear()
+        return true
+      }
+
       function addEntry(entry) {
-        const signature = [entry.source, entry.level, entry.message].join('\u0000')
+        const signature = getEntrySignature(entry)
         if (
           (entry.id && state.entryIds.has(entry.id)) ||
           state.entrySignatures.has(signature)
         ) return
         if (entry.id) state.entryIds.add(entry.id)
         state.entrySignatures.add(signature)
-        state.entries.push(entry)
+        state.entryQueue.push(entry)
         cacheEntrySearchText(entry)
-        state.displayEntriesCache.clear()
-        state.visibleEntriesCache.clear()
-        state.virtualMetricsCache.clear()
-        if (state.refreshPaused) state.deferredEntryIds.add(entry.id)
-        else state.deferredEntryIds.clear()
-        if (state.entries.length > 2000) {
-          const removed = state.entries.shift()
-          if (removed.id) {
-            state.entryIds.delete(removed.id)
-            state.deferredEntryIds.delete(removed.id)
-            state.pendingUpdates.delete(removed.id)
-          }
-          state.entrySignatures.delete(
-            [removed.source, removed.level, removed.message].join('\u0000')
-          )
-        }
         scheduleRender()
       }
 
       function updateEntry(update) {
         if (state.refreshPaused) {
           state.pendingUpdates.set(update.id, update)
+          return
+        }
+        if (findQueuedEntry(update.id)) {
+          state.pendingUpdates.set(update.id, update)
+          scheduleRender()
           return
         }
         applyEntryUpdate(update)
@@ -1205,15 +1248,21 @@
         const renderVersion = state.renderVersion
         requestAnimationFrame(() => {
           state.renderScheduled = false
-          if (renderVersion !== state.renderVersion) return
+          if (renderVersion !== state.renderVersion) {
+            state.renderScrollToBottom = undefined
+            if (state.entryQueue.length > 0) scheduleRender()
+            return
+          }
           if (state.refreshPaused) {
             state.renderScrollToBottom = undefined
             return
           }
           const scrollToBottom = state.renderScrollToBottom
           state.renderScrollToBottom = undefined
+          commitQueuedEntries()
           if (state.activeView === 'log') renderLog(scrollToBottom)
           if (state.activeView === 'dashboard') renderDashboard()
+          if (state.entryQueue.length > 0) scheduleRender()
         })
       }
 
@@ -1222,15 +1271,14 @@
           state.autoScroll && isLogNearBottom()
         state.refreshPaused = false
         for (const update of state.pendingUpdates.values()) {
-          applyEntryUpdate(update)
+          if (!findQueuedEntry(update.id)) applyEntryUpdate(update)
         }
-        state.pendingUpdates.clear()
         state.deferredEntryIds.clear()
         state.displayEntriesCache.clear()
         state.virtualHeights.clear()
         state.virtualMetricsCache.clear()
-        if (state.activeView === 'log') renderLog(shouldScrollToBottom)
-        if (state.activeView === 'dashboard') renderDashboard()
+        state.renderScrollToBottom = shouldScrollToBottom
+        scheduleRender()
       }
 
       function updateReplayProgress(current, total) {
@@ -1583,6 +1631,7 @@
         state.visibleEntriesCache.clear()
         state.searchTextCache = new WeakMap()
         state.virtualEntries = []
+        state.entryQueue.length = 0
         state.virtualHeights.clear()
         state.virtualMetricsCache.clear()
         state.deferredEntryIds.clear()
