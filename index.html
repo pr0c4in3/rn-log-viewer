@@ -260,7 +260,7 @@
 
       .log-view { min-height: 0; }
       .log-list { min-height: 0; flex: 1; overflow: auto; overflow-x: hidden; padding: 12px; }
-      .entry-list { display: block; min-height: 100%; }
+      .entry-list { display: block; }
       .virtual-spacer { width: 1px; opacity: 0; pointer-events: none; }
       .entry {
         min-width: 0;
@@ -1820,6 +1820,8 @@
         event.currentTarget.classList.add('active')
       })
       $('#clear').addEventListener('click', () => {
+        setLogScrollTop(0)
+        state.virtualRenderScheduled = false
         state.entries.length = 0
         state.entryIds.clear()
         state.entrySignatures.clear()
