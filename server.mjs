@@ -318,24 +318,32 @@ const server = createServer((request, response) => {
       'Access-Control-Allow-Origin': '*',
     })
     response.write(': connected\n\n')
-    const clientState = { replaying: true, queue: [] }
+    const shouldReplay = requestUrl.searchParams.get('history') !== '0'
+    const clientState = { replaying: shouldReplay, queue: [] }
     clients.set(response, clientState)
-    const snapshot = history.slice()
-    sendSseEvent(response, 'replay-start', { total: snapshot.length })
-    for (let index = 0; index < snapshot.length; index += 1) {
-      sendSseEvent(response, 'message', snapshot[index])
-      sendSseEvent(response, 'replay-progress', {
-        current: index + 1,
-        total: snapshot.length,
-      })
+    if (shouldReplay) {
+      const snapshot = history.slice()
+      sendSseEvent(response, 'replay-start', { total: snapshot.length })
+      for (let index = 0; index < snapshot.length; index += 1) {
+        sendSseEvent(response, 'message', snapshot[index])
+        sendSseEvent(response, 'replay-progress', {
+          current: index + 1,
+          total: snapshot.length,
+        })
+      }
+      clientState.replaying = false
+      for (const event of clientState.queue) {
+        sendSseEvent(response, event.eventName, event.data)
+      }
+      clientState.queue.length = 0
+      sendSseEvent(response, 'replay-end', { total: snapshot.length })
     }
-    clientState.replaying = false
-    for (const event of clientState.queue) {
-      sendSseEvent(response, event.eventName, event.data)
-    }
-    clientState.queue.length = 0
-    sendSseEvent(response, 'replay-end', { total: snapshot.length })
     request.on('close', () => clients.delete(response))
+    return
+  }
+
+  if (request.method === 'GET' && requestUrl.pathname === '/api/history') {
+    sendJson(response, 200, history.slice())
     return
   }
 
