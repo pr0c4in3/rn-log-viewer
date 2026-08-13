@@ -55,7 +55,7 @@
         flex-direction: column;
         border-right: 1px solid var(--line);
         background: #0e141c;
-        transition: flex-basis .2s ease;
+        transition: none;
       }
       .sidebar.collapsed { flex-basis: 66px; }
       .brand {
@@ -564,8 +564,10 @@
         compactMode: true,
         virtualEntries: [],
         virtualHeights: new Map(),
+        virtualMetricsCache: new Map(),
         virtualTotalHeight: 0,
         virtualRenderScheduled: false,
+        renderVersion: 0,
         deferredEntryIds: new Set(),
         pendingUpdates: new Map(),
         visibleEntriesCache: new Map(),
@@ -574,8 +576,7 @@
         mergeStartup: true,
         displayEntriesCache: new Map(),
         virtualScrolling: true,
-        followBottom: false,
-        smoothScrollUntil: 0,
+        programmaticScroll: false,
       }
 
       const $ = selector => document.querySelector(selector)
@@ -584,7 +585,7 @@
       const searchNode = $('#search')
       const levelFilters = [...document.querySelectorAll('[data-level-filter]')]
       const logList = entryList.parentElement
-      const bottomSnapDistance = 30
+      const bottomFollowDistance = 50
 
       function getBottomDistance() {
         return Math.max(
@@ -593,27 +594,18 @@
         )
       }
 
-      function isLogAtBottom() {
-        return getBottomDistance() <= 1
-      }
-
       function isLogNearBottom() {
-        return getBottomDistance() <= bottomSnapDistance
+        return getBottomDistance() <= bottomFollowDistance
       }
 
-      function shouldFollowBottom() {
-        return state.followBottom || isLogNearBottom()
-      }
-
-      function scrollLogToBottom(smooth = false) {
+      function scrollLogToBottom() {
         const top = Math.max(0, logList.scrollHeight - logList.clientHeight)
         if (Math.abs(logList.scrollTop - top) <= 1) return
-        if (smooth && typeof logList.scrollTo === 'function') {
-          state.smoothScrollUntil = performance.now() + 500
-          logList.scrollTo({ top, behavior: 'smooth' })
-          return
-        }
+        state.programmaticScroll = true
         logList.scrollTop = top
+        requestAnimationFrame(() => {
+          state.programmaticScroll = false
+        })
       }
 
       function formatTime(value) {
@@ -898,13 +890,16 @@
         const keyword = getKeyword().toLowerCase()
         const levels = [...state.selectedLevels].sort().join(',')
         const cacheKey = `${includeDeferred ? 'all' : 'render'}|${levels}|${keyword}`
-        const cached = state.visibleEntriesCache.get(cacheKey)
-        if (cached) return cached
+        const cacheable = !keyword
+        if (cacheable) {
+          const cached = state.visibleEntriesCache.get(cacheKey)
+          if (cached) return cached
+        }
         const visible = getDisplayEntries(includeDeferred).filter(entry => {
           const levelMatched = state.selectedLevels.size === 0 || state.selectedLevels.has(entry.level)
           return levelMatched && (!keyword || getEntrySearchText(entry).includes(keyword))
         })
-        state.visibleEntriesCache.set(cacheKey, visible)
+        if (cacheable) state.visibleEntriesCache.set(cacheKey, visible)
         return visible
       }
 
@@ -961,11 +956,15 @@
       }
 
       function getVirtualMetrics(items) {
+        const cached = state.virtualMetricsCache.get(items)
+        if (cached) return cached
         const offsets = [0]
         for (const entry of items) {
           offsets.push(offsets[offsets.length - 1] + getVirtualHeight(entry))
         }
-        return { offsets, total: offsets[offsets.length - 1] }
+        const metrics = { offsets, total: offsets[offsets.length - 1] }
+        state.virtualMetricsCache.set(items, metrics)
+        return metrics
       }
 
       function findVirtualIndex(offsets, position) {
@@ -990,9 +989,11 @@
         if (!state.virtualScrolling) return
         if (state.virtualRenderScheduled) return
         state.virtualRenderScheduled = true
+        const entries = state.virtualEntries
         requestAnimationFrame(() => {
           state.virtualRenderScheduled = false
           if (!state.virtualScrolling) return
+          if (entries !== state.virtualEntries) return
           renderVirtualWindow()
         })
       }
@@ -1003,7 +1004,7 @@
         state.virtualTotalHeight = 0
       }
 
-      function renderVirtualWindow() {
+      function renderVirtualWindow(forceBottom = false) {
         if (!state.virtualScrolling) return
         const items = state.virtualEntries
         if (!items.length) {
@@ -1015,8 +1016,7 @@
         const metrics = getVirtualMetrics(items)
         const viewportHeight = logList.clientHeight || 600
         const scrollTop = logList.scrollTop
-        const keepBottom = state.followBottom || isLogNearBottom()
-        if (keepBottom) state.followBottom = true
+        const keepBottom = forceBottom
         const anchorIndex = findVirtualIndex(metrics.offsets, scrollTop)
         const anchorOffset = scrollTop - metrics.offsets[anchorIndex]
         const anchorNode = entryList.querySelector(
@@ -1026,7 +1026,7 @@
         const anchorTop = anchorNode
           ? anchorNode.getBoundingClientRect().top - containerTop
           : null
-        const overscan = 1800
+        const overscan = 800
         const start = Math.max(
           0,
           findVirtualIndex(metrics.offsets, Math.max(0, scrollTop - overscan)) - 1
@@ -1066,6 +1066,7 @@
         })
         let adjustedMetrics = metrics
         if (heightChanged) {
+          state.virtualMetricsCache.clear()
           adjustedMetrics = getVirtualMetrics(items)
           topSpacer.style.height = `${adjustedMetrics.offsets[start]}px`
           bottomSpacer.style.height = `${Math.max(
@@ -1115,11 +1116,14 @@
       }
 
       function renderLog(scrollToBottom) {
-        if (scrollToBottom) state.followBottom = true
+        state.renderVersion += 1
         updateFilterControls()
         const visible = getRenderableEntries()
         state.virtualEntries = visible
-        if (state.virtualScrolling) renderVirtualWindow()
+        const shouldScroll = scrollToBottom === undefined
+          ? state.autoScroll && state.activeView === 'log' && isLogNearBottom()
+          : scrollToBottom
+        if (state.virtualScrolling) renderVirtualWindow(shouldScroll)
         else renderFullWindow()
         emptyNode.hidden = visible.length > 0
         emptyNode.textContent = state.entries.length === 0
@@ -1127,12 +1131,7 @@
           : '没有符合当前 filter 的内容'
         $('#clear').disabled = state.entries.length === 0
         $('#export').disabled = visible.length === 0
-        const shouldScroll = scrollToBottom === undefined
-          ? state.autoScroll && state.activeView === 'log' &&
-            shouldFollowBottom()
-          : scrollToBottom
         if (shouldScroll) {
-          state.followBottom = true
           scrollLogToBottom()
         }
       }
@@ -1149,6 +1148,7 @@
         cacheEntrySearchText(entry)
         state.displayEntriesCache.clear()
         state.visibleEntriesCache.clear()
+        state.virtualMetricsCache.clear()
         if (state.refreshPaused) state.deferredEntryIds.add(entry.id)
         else state.deferredEntryIds.clear()
         if (state.entries.length > 2000) {
@@ -1184,6 +1184,7 @@
         state.displayEntriesCache.clear()
         state.visibleEntriesCache.clear()
         state.virtualHeights.clear()
+        state.virtualMetricsCache.clear()
         state.entrySignatures.add(
           [entry.source, entry.level, entry.message].join('\u0000')
         )
@@ -1197,26 +1198,28 @@
         if (state.refreshPaused) return
         if (state.renderScrollToBottom === undefined) {
           state.renderScrollToBottom = state.autoScroll &&
-            state.activeView === 'log' && shouldFollowBottom()
+            state.activeView === 'log' && isLogNearBottom()
         }
         if (state.renderScheduled) return
         state.renderScheduled = true
+        const renderVersion = state.renderVersion
         requestAnimationFrame(() => {
           state.renderScheduled = false
+          if (renderVersion !== state.renderVersion) return
           if (state.refreshPaused) {
             state.renderScrollToBottom = undefined
             return
           }
           const scrollToBottom = state.renderScrollToBottom
           state.renderScrollToBottom = undefined
-          renderLog(scrollToBottom)
-          renderDashboard()
+          if (state.activeView === 'log') renderLog(scrollToBottom)
+          if (state.activeView === 'dashboard') renderDashboard()
         })
       }
 
       function resumeRefresh() {
         const shouldScrollToBottom = state.activeView === 'log' &&
-          state.autoScroll && shouldFollowBottom()
+          state.autoScroll && isLogNearBottom()
         state.refreshPaused = false
         for (const update of state.pendingUpdates.values()) {
           applyEntryUpdate(update)
@@ -1225,8 +1228,9 @@
         state.deferredEntryIds.clear()
         state.displayEntriesCache.clear()
         state.virtualHeights.clear()
-        renderLog(shouldScrollToBottom)
-        renderDashboard()
+        state.virtualMetricsCache.clear()
+        if (state.activeView === 'log') renderLog(shouldScrollToBottom)
+        if (state.activeView === 'dashboard') renderDashboard()
       }
 
       function updateReplayProgress(current, total) {
@@ -1475,6 +1479,7 @@
         state.compactMode = enabled
         $('#compactModeSetting').checked = enabled
         state.virtualHeights.clear()
+        state.virtualMetricsCache.clear()
         renderLog()
       }
 
@@ -1484,6 +1489,7 @@
         state.displayEntriesCache.clear()
         state.visibleEntriesCache.clear()
         state.virtualHeights.clear()
+        state.virtualMetricsCache.clear()
         renderLog()
       }
 
@@ -1491,6 +1497,7 @@
         state.virtualScrolling = enabled
         $('#virtualScrollingSetting').checked = enabled
         state.virtualHeights.clear()
+        state.virtualMetricsCache.clear()
         state.virtualRenderScheduled = false
         renderLog()
       }
@@ -1518,7 +1525,9 @@
           setActiveView(button.dataset.view)
         })
       })
-      $('#sidebarToggle').addEventListener('click', () => $('#sidebar').classList.toggle('collapsed'))
+      $('#sidebarToggle').addEventListener('click', () => {
+        $('#sidebar').classList.toggle('collapsed')
+      })
       $('#tableMode').addEventListener('change', event => {
         state.tableMode = event.target.value
         renderDashboardTable()
@@ -1538,6 +1547,7 @@
         setVirtualScrolling(event.currentTarget.checked)
       })
       searchNode.addEventListener('input', () => {
+        state.virtualMetricsCache.clear()
         renderLog()
         if (state.drawerEntry) renderDrawerMessage()
       })
@@ -1572,10 +1582,11 @@
         state.searchTextCache = new WeakMap()
         state.virtualEntries = []
         state.virtualHeights.clear()
+        state.virtualMetricsCache.clear()
         state.deferredEntryIds.clear()
         state.pendingUpdates.clear()
-        renderLog()
-        renderDashboard()
+        if (state.activeView === 'log') renderLog()
+        if (state.activeView === 'dashboard') renderDashboard()
       })
       $('#export').addEventListener('click', () => {
         const blob = new Blob([JSON.stringify(getVisibleEntries(), null, 2)], { type: 'application/json' })
@@ -1596,24 +1607,13 @@
         closeSettings()
       })
       logList.addEventListener('scroll', () => {
-        const nearBottom = isLogNearBottom()
-        const inSmoothScroll = performance.now() < state.smoothScrollUntil
-        if (nearBottom) {
-          state.followBottom = true
-          if (state.renderScrollToBottom !== undefined) {
-            state.renderScrollToBottom = true
-          }
-          if (!isLogAtBottom()) scrollLogToBottom(true)
-        } else if (!inSmoothScroll) {
-          state.followBottom = false
-          if (state.renderScrollToBottom !== undefined) {
-            state.renderScrollToBottom = false
-          }
+        if (state.virtualScrolling && !state.programmaticScroll) {
+          scheduleVirtualRender()
         }
-        if (state.virtualScrolling) scheduleVirtualRender()
       }, { passive: true })
       window.addEventListener('resize', () => {
         state.virtualHeights.clear()
+        state.virtualMetricsCache.clear()
         if (state.virtualScrolling) scheduleVirtualRender()
       })
 
